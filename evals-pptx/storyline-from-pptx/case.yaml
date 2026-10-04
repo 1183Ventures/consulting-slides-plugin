@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: storyline-from-pptx
+description: Storyline checker reads a .pptx with the bundled outline script. Needs --scaffold and a python3 Bash grant.
+tags: [storyline-checker, pptx]
+context:
+  scaffold_script: make_deck.sh

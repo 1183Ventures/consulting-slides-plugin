@@ -1,0 +1,10 @@
+# Written by each claude plugin eval run
+evals/results/
+evals-pptx/results/
+# System and build files the directory refuses or doesn't need
+.DS_Store
+Thumbs.db
+desktop.ini
+__MACOSX/
+__pycache__/
+*.pyc

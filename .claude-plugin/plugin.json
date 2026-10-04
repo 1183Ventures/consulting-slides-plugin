@@ -1,0 +1,29 @@
+{
+  "name": "slideshortcuts-consulting-slides",
+  "displayName": "Consulting Slides",
+  "version": "1.0.0",
+  "description": "Write slides the way strategy consultants do: action titles that state the takeaway, MECE bullets with bold lead-ins and sourced numbers, a storyline check that reads only the titles, and one-page executive summaries.",
+  "author": {
+    "name": "SlideShortcuts",
+    "email": "support@slideshortcuts.com",
+    "url": "https://slideshortcuts.com"
+  },
+  "homepage": "https://slideshortcuts.com",
+  "repository": "https://github.com/1183Ventures/consulting-slides-plugin",
+  "documentationUrl": "https://github.com/1183Ventures/consulting-slides-plugin#readme",
+  "license": "MIT",
+  "keywords": [
+    "consulting",
+    "slides",
+    "presentations",
+    "storyline",
+    "action-titles",
+    "executive-summary",
+    "mece",
+    "powerpoint",
+    "google-slides"
+  ],
+  "icon": "./icon.png",
+  "supportUrl": "https://slideshortcuts.com/support",
+  "privacyPolicyUrl": "https://slideshortcuts.com/privacy"
+}
