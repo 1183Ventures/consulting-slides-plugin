@@ -1,11 +1,13 @@
 ---
 name: slide-writer
-description: Writes the content for one consulting-style slide from rough notes, data, an analysis, or a question. Produces an action title that states the takeaway as a full sentence, a one-line lede, three to five body bullets with short bold lead-ins grouped so they neither overlap nor leave gaps (MECE), a source line with placeholders instead of invented numbers, and a recommended layout (comparison table, from-to, waterfall or sequence, 2x2, evidence stack, or case spotlight) with the reason. Use when the user asks to turn notes, findings, numbers, or a chart into a slide; to draft the text for a page of a deck, steering committee, or client presentation; to write or fix a slide title, headline, or so-what; or to tighten an existing slide. Writes slide text, not a .pptx file.
+description: Writes the content for one consulting-style slide from rough notes, data, an analysis, or a question. Produces an action title that states the takeaway as a full sentence, a one-line lede, three to five body bullets with short bold lead-ins grouped so they neither overlap nor leave gaps (MECE), a source line with placeholders instead of invented numbers, and a recommended layout (comparison table, from-to, waterfall or sequence, 2x2, evidence stack, case spotlight, issue tree, or options for discussion) with the reason. Knows consulting shorthand (tracker, sticker, ghost deck, dot-dash, mekko, Harvey balls) and common slide types (performance against plan, for discussion, approach, initiatives and impact, benchmark against peers). Use when the user asks to turn notes, findings, numbers, or a chart into a slide; to draft the text for a page of a deck, steering committee, or client presentation; to write or fix a slide title, headline, or so-what; to build an issue tree or a for-discussion slide; or to tighten an existing slide. Writes slide text, not a .pptx file.
 ---
 
 # Slide writer
 
 Write one slide the way a strong engagement manager would: the reader gets the point from the title, sees why it is true in the body, and can trace every number to a source.
+
+If the user uses consulting shorthand (tracker, sticker, ghost deck, dot-dash, mekko, Harvey balls, pre-read) or asks for one of these slide types: performance against plan, for discussion, issue tree, approach, initiatives and impact, benchmark against peers, agenda; read `references/slide-patterns.md` first. It explains each term and gives an invented example of each slide type.
 
 ## 1. Find the one message
 
@@ -31,7 +33,7 @@ One sentence, two at most, between the title and the body. It tells the reader h
 ## 4. Write the body
 
 - Three to five bullets. Each starts with a bold lead-in of one to four words, then a colon, then one sentence that carries the evidence: a number, a fact, or a concrete example.
-- Keep the lead-ins parallel (all nouns, or all verb phrases) and build the sentences the same way.
+- Keep the lead-ins parallel (all nouns, or all verb phrases) and build the sentences the same way. No two lead-ins in the group start with the same word, and the word after the colon starts with a capital letter.
 - Group the bullets so they are mutually exclusive and together cover the claim. Choose one dimension to split on (segment, driver, stage, or time) and stick to it. If something important is out of scope, say so in a note rather than leaving a silent gap.
 - One idea per bullet, at most two lines each. Use a sub-bullet only when it adds evidence, and never go deeper than one level.
 - Test it: the title plus the bold lead-ins, read alone, should tell the slide's story.
@@ -45,7 +47,7 @@ One sentence, two at most, between the title and the body. It tells the reader h
 
 ## 6. Pick the layout
 
-Choose one of these six by what the message does, not by what looks good, and give the reason in one sentence.
+Choose one of these eight by what the message does, not by what looks good, and give the reason in one sentence.
 
 | Layout | Use it when the message | What goes on the slide |
 | --- | --- | --- |
@@ -55,8 +57,10 @@ Choose one of these six by what the message does, not by what looks good, and gi
 | 2x2 | Sorts items on two dimensions to show where to act | Two labeled axes (low to high), items placed in quadrants, the action quadrant named |
 | Evidence stack | Makes one claim that needs several independent proofs | Three or four proof blocks (data, benchmark, quote, example), each with its own lead-in |
 | Case spotlight | Proves the point with one concrete example in depth | The situation, what was done, the result in numbers, and the lesson for the reader |
+| Issue tree | Breaks a question into the drivers or hypotheses that answer it | The question at the root, two or three levels of branches that don't overlap, a testable hypothesis or analysis at each leaf |
+| Options for discussion | Frames a decision the group has to make | Two to four options with pros, cons, and rough impact, the proposed one marked with the reason |
 
-For a comparison table, 2x2, or waterfall, also give the visual's content (the rows and columns, what sits in each quadrant, or the bars) and keep two to four bullets as callouts.
+For a comparison table, 2x2, or waterfall, also give the visual's content (the rows and columns, what sits in each quadrant, or the bars) and keep two to four bullets as callouts. For a performance-against-plan page, an initiative portfolio, or a benchmark against peers, set the comparison table out as `references/slide-patterns.md` describes.
 
 ## 7. Write in this style
 
@@ -68,6 +72,10 @@ For a comparison table, 2x2, or waterfall, also give the visual's content (the r
 ## Output format
 
 Use this structure, in this order:
+
+**Tracker:** <only if the user's deck uses one: the sections, with the current one marked>
+
+**Sticker:** <only if one applies: Preliminary, For discussion, Illustrative, Draft>
 
 **Title:** <action title>
 
@@ -87,6 +95,8 @@ Use this structure, in this order:
 **Check before you use it:** <at most three one-line bullets: the assumptions, placeholders, and claims to verify that matter most; leave this out if there are none>
 
 **Other slides this material supports:** <only if you found more than one message>
+
+If the user's template keeps a short label in the title box, replace **Title** with **Label** (the section or topic, two to five words) and **Headline** (the action title).
 
 ## Example
 

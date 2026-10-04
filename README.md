@@ -10,6 +10,8 @@ Consulting Slides teaches Claude to write slides the way strategy consultants do
 | **Storyline checker** | Reads a draft deck's titles in order and checks that they tell the story. Flags topic labels, claims the evidence doesn't support, slides that overlap, and gaps in the argument, then proposes rewritten titles and a revised order. | "Check the storyline of this deck" |
 | **Executive summary** | Writes the one-page summary that leads a deck or memo: the answer first, three to five supporting points with evidence, and the decision or next steps requested. | "Write the exec summary for these findings" |
 
+The slide writer also knows consulting shorthand (tracker, sticker, ghost deck, dot-dash, mekko, Harvey balls) and common slide types: performance against plan, for-discussion slides, issue trees, approach pages, initiative portfolios, and peer benchmarks. The storyline checker reads decks whose template keeps a short label in the title box and the takeaway just below it.
+
 You don't need to name a skill. Claude picks the right one from your request. In Claude Code you can also run one directly, for example `/slideshortcuts-consulting-slides:slide-writer`.
 
 ## Example prompts

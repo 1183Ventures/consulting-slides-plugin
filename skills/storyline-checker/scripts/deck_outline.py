@@ -16,6 +16,7 @@ What it does and doesn't do:
 import argparse
 import json
 import posixpath
+import re
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
@@ -31,6 +32,8 @@ OFFICE_DOC_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
 )
 TITLE_TYPES = {"title", "ctrTitle"}
+# Reviewer comments, to-dos and footers are not headlines.
+NOTE_START = re.compile(r"^\s*(@|WIP\b|TBD\b|TODO\b|Notes?\s*:|Sources?\s*:)", re.I)
 SKIP_TYPES = {"sldNum", "dt", "ftr", "hdr"}
 MAX_PART_BYTES = 50 * 1024 * 1024  # refuse absurdly large XML parts
 
@@ -189,11 +192,31 @@ def read_slide(package, part_name, slide_height):
             title_source = "top text box (guessed)"
             texts.remove(best)
 
+    # Many consulting templates keep a short label in the title box (a section
+    # or topic name) and write the takeaway in a text box just below it. When
+    # the title is that short, the highest sentence-length text box in the top
+    # third of the slide is reported as the headline.
+    headline = ""
+    if title and len(title.split()) <= 8:
+        below = [
+            item for item in texts
+            if item[0] is not None
+            and item[1] in (None, "obj", "body", "subTitle")
+            and item[0] <= slide_height * 0.35
+            and len(" ".join(item[2]).split()) >= 8
+            and not NOTE_START.match(" ".join(item[2]))
+        ]
+        if below:
+            best = min(below, key=lambda item: item[0])
+            headline = " ".join(best[2])
+            texts.remove(best)
+
     ordered = sorted(texts, key=lambda item: (item[0] is None, item[0] or 0))
     body = ["; ".join(item[2]) for item in ordered]
     return {
         "hidden": root.get("show") == "0",
         "title": title,
+        "headline": headline,
         "title_source": title_source,
         "text": body,
         "objects": sorted(set(found["objects"])),
@@ -256,6 +279,8 @@ def print_text(path, slides, body_chars):
         if flags:
             label += " [" + "; ".join(flags) + "]"
         print("%s: %s" % (label, s["title"] or "(no title)"))
+        if s.get("headline"):
+            print("    headline: %s" % s["headline"])
         body = clip(" | ".join(s["text"]), body_chars)
         if body:
             print("    text: %s" % body)
