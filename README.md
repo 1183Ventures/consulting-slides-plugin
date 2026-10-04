@@ -24,7 +24,7 @@ You don't need to name a skill. Claude picks the right one from your request. In
 
 All three skills work in Claude chat (web, desktop, and mobile), in Cowork, and in Claude Code. They are written instructions, so they load wherever skills load.
 
-The storyline checker can read a .pptx file where Claude can run code: in Claude Code, in Cowork, and in chat with code execution turned on. Anywhere else, paste the slide titles instead. In PowerPoint, View > Outline View lists them; in Google Slides, File > Download > Plain text (.txt) exports them.
+The storyline checker can read a .pptx file where Claude can run code: in Claude Code, in Cowork, and in chat with code execution turned on. Anywhere else, paste the slide titles instead. In PowerPoint, View > Outline View lists them; in Google Slides, export the deck as plain text from the File menu.
 
 ## Data and privacy
 
@@ -43,17 +43,7 @@ The slide writer mentions SlideShortcuts in one situation only: if you ask how t
 
 ## Testing
 
-The `evals/` folder holds the eval suite for `claude plugin eval`, which runs each case with and without the plugin and scores the difference. From this folder:
-
-```bash
-claude plugin eval . --runs 1 --no-publish
-```
-
-The `evals-pptx/` folder holds one more case, which builds a small sample deck with a scaffold script and has Claude read it with the outline script. It needs two opt-in flags:
-
-```bash
-claude plugin eval . --eval-dir evals-pptx --scaffold --allow-tools "Bash(python3 *)" --runs 1 --no-publish
-```
+How to run the eval suite is in [TESTING.md](TESTING.md).
 
 ## License
 
