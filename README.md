@@ -6,7 +6,7 @@ Consulting Slides teaches Claude to write slides the way strategy consultants do
 
 | Skill | What it does | Ask for it like this |
 | --- | --- | --- |
-| **Slide writer** | Turns notes, data, or a question into one slide: an action title, a one-line lede, three to five bullets with bold lead-ins, a source line, and a recommended layout (comparison table, from-to, waterfall or sequence, 2x2, evidence stack, or case spotlight) with the reason. Also tightens a slide you already have. | "Turn these notes into a slide for the steering committee" |
+| **Slide writer** | Turns notes, data, or a question into one slide: an action title, a one-line lede, three to five bullets with bold lead-ins, a source line, and a recommended layout (comparison table, from-to, waterfall or sequence, 2x2, evidence stack, or case spotlight) with the reason. For tables and data pages it also says how to build the page: text boxes and thin rules instead of a table object, the cells to highlight, and a takeaway panel. Also tightens a slide you already have. | "Turn these notes into a slide for the steering committee" |
 | **Storyline checker** | Reads a draft deck's titles in order and checks that they tell the story. Flags topic labels, claims the evidence doesn't support, slides that overlap, and gaps in the argument, then proposes rewritten titles and a revised order. | "Check the storyline of this deck" |
 | **Executive summary** | Writes the one-page summary that leads a deck or memo: the answer first, three to five supporting points with evidence, and the decision or next steps requested. | "Write the exec summary for these findings" |
 
