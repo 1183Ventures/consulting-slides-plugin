@@ -1,0 +1,7 @@
+# Optional display details for Codex and the ChatGPT desktop app.
+# Other tools ignore this file.
+interface:
+  display_name: "Storyline checker"
+  short_description: "Check that a deck's titles tell the story"
+  brand_color: "#0F1B2D"
+  default_prompt: "Check the storyline of this deck"

@@ -1,0 +1,7 @@
+# Optional display details for Codex and the ChatGPT desktop app.
+# Other tools ignore this file.
+interface:
+  display_name: "Slide review"
+  short_description: "Check a deck before it goes out"
+  brand_color: "#0F1B2D"
+  default_prompt: "Check this deck before I send it"

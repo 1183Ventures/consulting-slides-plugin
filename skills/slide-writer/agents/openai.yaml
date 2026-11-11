@@ -1,0 +1,7 @@
+# Optional display details for Codex and the ChatGPT desktop app.
+# Other tools ignore this file.
+interface:
+  display_name: "Slide writer"
+  short_description: "Turn notes or data into one consulting slide"
+  brand_color: "#0F1B2D"
+  default_prompt: "Turn these notes into a slide with an action title"

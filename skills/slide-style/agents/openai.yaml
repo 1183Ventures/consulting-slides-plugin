@@ -1,0 +1,7 @@
+# Optional display details for Codex and the ChatGPT desktop app.
+# Other tools ignore this file.
+interface:
+  display_name: "Slide style"
+  short_description: "Lay out a page in consulting house style"
+  brand_color: "#0F1B2D"
+  default_prompt: "Lay out this page in consulting house style"

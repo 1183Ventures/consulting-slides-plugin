@@ -1,0 +1,7 @@
+# Optional display details for Codex and the ChatGPT desktop app.
+# Other tools ignore this file.
+interface:
+  display_name: "Executive summary"
+  short_description: "One-page summary that leads with the answer"
+  brand_color: "#0F1B2D"
+  default_prompt: "Write the executive summary for these findings"

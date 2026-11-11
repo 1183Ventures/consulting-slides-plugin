@@ -1,6 +1,6 @@
 ---
 name: storyline-checker
-description: Checks the storyline of a draft deck by reading its slide titles in order and testing whether the titles alone tell the story. Flags topic-label titles, titles that claim more than the evidence supports, slides that overlap, and gaps in the argument (MECE), then proposes rewritten titles and a revised order. Reads titles pasted as text or an outline, or a .pptx file when Claude can run code. Use when the user asks to review, pressure-test, or tighten a deck; to check its flow, storyline, or horizontal logic; to see whether the titles tell a story; or to review a ghost deck, storyboard, or outline.
+description: Checks the storyline of a draft deck by reading its slide titles in order and testing whether the titles alone tell the story. Flags topic-label titles, titles that claim more than the evidence supports, slides that overlap, and gaps in the argument (MECE), then proposes rewritten titles and a revised order. Reads titles pasted as text or an outline, or a .pptx file where it can run code. Use when the user asks to review, pressure-test, or tighten a deck; to check its flow, storyline, or horizontal logic; to see whether the titles tell a story; or to review a ghost deck, storyboard, or outline.
 ---
 
 # Storyline checker
@@ -10,13 +10,13 @@ A finished deck can be understood from its titles alone. Read the titles the way
 ## 1. Get the titles in order
 
 - **Pasted text or an outline:** take one title per line, in the order given, and keep any slide numbers. If body text sits under a title, keep it with that slide; you will use it to test the claims.
-- **A .pptx file:** if you can run code, extract the outline with the bundled script:
+- **A .pptx file:** if you can run code, extract the outline with the bundled script, from this skill's folder:
 
   ```
-  python3 ${CLAUDE_SKILL_DIR}/scripts/deck_outline.py "<path to the .pptx>"
+  python3 scripts/deck_outline.py "<path to the .pptx>"
   ```
 
-  In claude.ai chat the script is at `scripts/deck_outline.py` next to this file, so run it from there. It prints each slide's number and title in order with a short preview of the slide's other text, and marks hidden slides and slides whose title had to be guessed. It uses only the Python standard library and reads nothing but the file you pass. Many consulting templates keep a short label in the title box and write the takeaway in a box just below it: the script prints that takeaway as `headline:` under the title. Treat the headline as the slide's title. If it reads like a reviewer's note or instructions rather than a takeaway, ignore it.
+  In Claude Code the full path is `${CLAUDE_SKILL_DIR}/scripts/deck_outline.py`; in claude.ai chat and in other tools, the script is at `scripts/deck_outline.py` next to this file. It prints each slide's number and title in order with a short preview of the slide's other text, and marks hidden slides and slides whose title had to be guessed. It uses only the Python standard library and reads nothing but the file you pass. Many consulting templates keep a short label in the title box and write the takeaway in a box just below it: the script prints that takeaway as `headline:` under the title. Treat the headline as the slide's title. If it reads like a reviewer's note or instructions rather than a takeaway, ignore it.
 - **No way to read the file:** ask the user to paste the titles. In PowerPoint, View > Outline View lists them in order. In Google Slides, File > Download > Plain text (.txt) exports the deck's text.
 - Set aside the cover, agenda, section dividers, and appendix: they are labels by design. Stickers such as "Preliminary", "Draft", or "For discussion" qualify a slide; they are not its title. Check them only for consistency, for example whether the agenda matches the sections that follow. Leave hidden slides out of the story and mention them once.
 

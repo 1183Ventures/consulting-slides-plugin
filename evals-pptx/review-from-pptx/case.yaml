@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-from-pptx
+description: Slide review checks a .pptx with the bundled review script. Needs --scaffold and a python3 Bash grant.
+tags: [slide-review, pptx]
+context:
+  scaffold_script: make_deck.sh
