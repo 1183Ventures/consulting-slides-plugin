@@ -121,7 +121,7 @@ PERIOD = re.compile(
 # "Source:" or "Sources:", a footnote number before it allowed
 SOURCE = re.compile(
     "(?:^|[\r\n\x0b]|[;.]" + S + ")" + S + "*(?:\\d+[.)]?" + S + "*)?(?:data" + S + "+)?sources?" + S + "*(?:\\(s\\))?"
-    + S + "*[:\\-–]",
+    + S + "*[:\\-\u2013]",
     FLAGS | re.IGNORECASE,
 )
 

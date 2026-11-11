@@ -1,11 +1,11 @@
 ---
 name: slide-review
-description: Reviews a draft deck or slide the way a manager does before it goes out, and lists what to fix page by page. Checks that every number in a title is on the page, every chart has a unit and a period, every page with figures has a source line, and every table total adds up. Finds leftovers that travel with the file (placeholder text, empty placeholders, objects off the slide, hidden slides, speaker notes, comments, sticky notes, Draft stamps, stray fonts) and, on a rendered page or screenshot, layout slips such as edges that nearly line up or uneven gaps. Reads a .pptx with a bundled script where it can run code, or slide text or screenshots. Use when the user asks to review, check, QA, proof, or sanity-check a deck or slide before sending it; asks whether a deck is ready to send or what a manager or partner would catch; or wants a final check of a pre-read. To test whether the titles tell a story, use the storyline checker instead.
+description: Reviews a draft deck or slide before it goes out and lists, page by page, what a manager would catch in its numbers, sources and leftovers. Checks that every number in a title is on the page, every chart has a unit and a period, every page with figures has a source line, and every table total adds up. Finds leftovers that travel with the file: placeholder text, empty placeholders, objects off the slide, hidden slides, speaker notes, comments, sticky notes, Draft stamps and stray fonts. Reads a .pptx with a bundled script, or pasted slide text or screenshots. It reports problems and how to fix them; it does not reformat pages. Use when the user asks to review, check, QA, proof, or sanity-check a deck or slide before sending it; asks whether a deck is ready to send or what a manager or partner would catch; or wants the numbers and sources in a pre-read checked. Not for tidying, aligning, or reformatting pages. To test whether the titles tell a story, use the storyline checker.
 ---
 
 # Slide review
 
-Check the deck the way a careful manager does the night before it goes out. Find what is wrong, say where it is and how to fix it, and leave the story alone: whether the titles tell a story is the storyline checker's job.
+Check the deck the way a careful manager does the night before it goes out: its numbers, its sources, and what it would carry out the door by mistake. Find what is wrong, say where it is and how to fix it, and change nothing yourself. Leave the story alone (whether the titles tell a story is the storyline checker's job), and leave the formatting alone (this review lists what it sees; it does not reformat pages).
 
 ## 1. Get the pages
 
@@ -47,9 +47,9 @@ The reader sees these, or can open them:
 
 List these. Don't remove them or tell the user to delete them unasked: hidden backup slides and notes are often kept on purpose. Ask.
 
-## 4. Layout, by eye
+## 4. Layout slips, by eye
 
-Judge layout only from a rendered page or a screenshot. If you have only the file, say that layout was not checked.
+Note layout slips only from a rendered page or a screenshot, and only list them: the fix is the user's, or a formatting tool's. If you have only the file, say that layout was not checked.
 
 - **Near misses:** an edge 1 to 3 pt off a line its neighbors share, a gap in a row or column wider or narrower than the others, a box a hair narrower than its peers, one text box in a different font size or with different inner margins from the boxes like it.
 - **Collisions:** text running over its box or the slide edge, a title running across a side panel, labels overlapping a chart.
