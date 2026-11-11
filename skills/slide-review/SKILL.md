@@ -28,7 +28,7 @@ These four checks catch most of what a reader trips over.
 
 1. **A number in the title is on the page.** The same figure counts when it is rounded or written at another scale: 12% in the title and 12.3% on the page, or $4.2M in the title and 4,200 in a table in $K. A year and a small count under 10 ("three levers") don't need to appear. When the page shows a different figure of the same kind, say so: "Title says 12%, page shows 11%". Never decide which is right: ask, or mark both [check].
 2. **Every chart has a unit and a period** where the reader sees them: in the exhibit title, an axis title, the legend or the source line. Fix it in the exhibit title, with a grey qualifier in parentheses: "Revenue by region ($M, FY2025)".
-3. **A page with figures has a source line**, a line that starts "Source:" or "Sources:". Facts need one: market sizes, survey results, financials, benchmarks. Plan figures don't: durations, dates and times, team sizes, targets, agenda timings. Drop this finding when the page's only figures are plans. The fix is a line in the form "Source: [system or study], [date]; [sample size]", with placeholders for what you don't know. Never invent a source.
+3. **A page with figures has a source line**, a line that starts "Source:" or "Sources:". Facts need one: market sizes, survey results, financials, benchmarks. Plan figures don't: the script already skips clock times and durations (09:45, 12 weeks, 10 min), and you drop this finding when the page's other figures are plans too, such as dates, team sizes and targets. The fix is a line in the form "Source: [system or study], [date]; [sample size]", with placeholders for what you don't know. Never invent a source.
 4. **A table's total row adds up**, allowing for rounding (each row may be off by half its last digit). A column of shares totals 100%. A rate, margin or multiple in a total row is not a sum, so don't add it up. Show the sum you got and the total the table shows.
 
 Across the deck, when the same metric appears on more than one page, check that it is the same number, unit and rounding everywhere.
@@ -117,4 +117,4 @@ Review, abridged:
 | 4 | Freight drove 64%... | No source line | Add "Source: [finance ledger], FY2025" |
 | 9 | Spot loads are 41%... | Placeholder "[X]" left in the body | Fill in the figure or cut the line |
 
-Slide 7 also said "No source line", but its only figures are dates and durations in the plan, so it needs none: dropped.
+Slide 7 also said "No source line", but its only figures are the plan's dates and team sizes, so it needs none: dropped.

@@ -129,6 +129,20 @@ TOTAL_ROW = re.compile("^" + S + "*(?:grand" + S + "+)?total\\b", FLAGS | re.IGN
 SUBTOTAL_ROW = re.compile("\\b(?:sub-?" + S + "?total|total)\\b", FLAGS | re.IGNORECASE)
 PAGE_NUMBER = re.compile("^" + S + "*\\d{1,3}" + S + "*\\Z", FLAGS)
 
+# Clock times and durations, which plan the work rather than report a figure:
+# "09:45", "9:45-10:30", "2:30 pm", "12 weeks", "10 min", "3-4 months",
+# "90 minutes". A figure beside one still counts: "12 weeks, $4M" keeps $4M.
+CLOCK = re.compile("\\b\\d{1,2}:\\d{2}(?::\\d{2})?(?:" + S + "?(?:am|pm|a\\.m\\.|p\\.m\\.))?", FLAGS | re.IGNORECASE)
+DURATION = re.compile(
+    "\\b\\d+(?:\\.\\d+)?(?:" + S + "?(?:-|\u2013|to)" + S + "?\\d+(?:\\.\\d+)?)?" + S + "?"
+    "(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|h|days?|weeks?|wks?|months?|mos?|years?|yrs?)\\b",
+    FLAGS | re.IGNORECASE,
+)
+
+
+def without_plans(text):
+    return DURATION.sub(" ", CLOCK.sub(" ", text or ""))
+
 
 def js_trim(text):
     return re.sub("^" + S + "+|" + S + "+$", "", text)
@@ -286,9 +300,11 @@ def judge_page(page):
         reasons.append("Table total does not add up")
 
     # A page with figures has a source line. A text that is only a small
-    # whole number is a page number typed by hand, not a figure.
+    # whole number is a page number typed by hand, not a figure; clock times
+    # (09:45, 2:30 pm) and durations (12 weeks, 10 min) plan the work and are
+    # not figures either.
     figures = charts > 0 or len(page.get("tables") or []) > 0 or any(
-        not PAGE_NUMBER.match(t) and any(telling(n) for n in numbers_in(t))
+        not PAGE_NUMBER.match(t) and any(telling(n) for n in numbers_in(without_plans(t)))
         for t in texts + table_texts
     )
     if figures and not page.get("isTitleSlide") and not any(SOURCE.search(t) for t in texts):
