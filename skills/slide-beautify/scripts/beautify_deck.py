@@ -62,6 +62,7 @@ MIN_SIZE = {"heading": 10, "body": 9, "label": 8, "fixed": 8}
 CHAR_W = 0.52   # average character width, in ems, for the fit estimate
 LINE_H = 1.2
 SLIDE_MARGIN = 1.03   # width room for decks not at the library's scale (Reviewer, 13 Nov 2026)
+PLAIN_MARGIN = 1.01   # width room at the library's scale: Windows wraps a line that fills its box
 # a theme face without a width table: the widest common face measured is 15%
 # wider than Arial, and lines are set up to 1.5 of the size (Poppins by its own
 # file; Poppins has a table of its own, at its Windows figure of 1.76)
@@ -216,7 +217,9 @@ def lay_out(shapes, page, place, deck_faces, report, label_half_step=False):
     # library's own scale (4:3, a band squeezed under a low title) keeps 3%
     # more room, which the Reviewer measured covers what one model leaves out
     plain = all(abs(v - 1) < 0.005 for v in (place.sx, place.sy, place.k))
-    margin, floor, max_raise = (1.0 if plain else SLIDE_MARGIN), 0, None
+    # a line that fills its box to within 1% wraps in PowerPoint on Windows (render of 14 Nov 2026:
+    # two texts with 0.1% to spare took a second line), so it counts as wrapping here too
+    margin, floor, max_raise = (PLAIN_MARGIN if plain else SLIDE_MARGIN), 0, None
     # a face the tables lack, used by this page's text: fitted with room for a
     # face up to 15% wider and taller lines, and its text never raised
     used = {("heading" if r.get("font") == "head" else "body")
@@ -291,6 +294,121 @@ def words_fit(shapes, measure, fonts):
     return True
 
 
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+HOUSE_TITLE, HOUSE_TITLE_MAX = 24, 32   # pt on a 13.333 in slide (lavender decktitle.js, #376)
+LIB_TITLE_BOX = (0.5, 0.56, 12.333, 0.9)  # in, the library's title frame (frame.js), scaled to the slide
+
+
+def _title_ph_xml(owner):
+    """The title placeholder's element in a layout or master, or None."""
+    for sp in owner.element.iter(P + "sp"):
+        ph = sp.find(".//" + P + "nvPr/" + P + "ph")
+        if ph is not None and ph.get("type") in ("title", "ctrTitle"):
+            return sp
+    return None
+
+
+def _box_of(sp):
+    if sp is None:
+        return None
+    off, ext = sp.find(".//" + A + "xfrm/" + A + "off"), sp.find(".//" + A + "xfrm/" + A + "ext")
+    if off is None or ext is None or int(ext.get("cx", 0)) <= 0 or int(ext.get("cy", 0)) <= 0:
+        return None
+    return int(off.get("x", 0)), int(off.get("y", 0)), int(ext.get("cx")), int(ext.get("cy"))
+
+
+def _lvl1(sp, attr, child=None):
+    if sp is None:
+        return None
+    el = sp.find(".//" + A + "lstStyle/" + A + "lvl1pPr")
+    if el is None:
+        return None
+    if child:
+        el = el.find(A + child)
+    return None if el is None else el.get(attr)
+
+
+def _title_style(master, attr, child=None):
+    el = master.element.find(".//" + P + "txStyles/" + P + "titleStyle/" + A + "lvl1pPr")
+    if el is None:
+        return None
+    if child:
+        el = el.find(A + child)
+    return None if el is None else el.get(attr)
+
+
+def place_title(prs, slide, title_ph, text, report):
+    """The title, as the file will draw it: box, size and alignment resolved
+    through slide, layout and master and written on the slide itself, never
+    left to PowerPoint's autofit (Windows render, 14 Nov 2026: a blank
+    deck's 44 pt titles ran into the page). The product's rule (lavender
+    decktitle.js, #376): a title style above 32 pt (scaled to the slide's
+    width) gets 24 pt, in a box two lines tall at the top of the layout's
+    title box. The title is measured with the width tables and steps down
+    half a point at a time if it does not fit; a box with no width is
+    replaced by the library's title frame. -> the title box's bottom, EMU."""
+    layout, master = slide.slide_layout, slide.slide_layout.slide_master
+    lay_sp, mas_sp = _title_ph_xml(layout), _title_ph_xml(master)
+    E = 914400
+    k = prs.slide_width / (13.333 * E)
+    box = _box_of(lay_sp) or _box_of(mas_sp)
+    if box is None:
+        x, y, w, h = LIB_TITLE_BOX
+        box = (round(x * k * E), round(y * prs.slide_height / (7.5 * E) * E), round(w * k * E), round(h * prs.slide_height / (7.5 * E) * E))
+        report["warnings"].append("The deck's title layout has no usable title box; the title was placed in the library's frame")
+    sz = _lvl1(lay_sp, "sz", "defRPr") or _lvl1(mas_sp, "sz", "defRPr") or _title_style(master, "sz", "defRPr")
+    size = int(sz) / 100 if sz else 44.0
+    algn = _lvl1(lay_sp, "algn") or _lvl1(mas_sp, "algn") or _title_style(master, "algn") or "l"
+    anchor = None
+    x, y, w, h = box
+    if size > HOUSE_TITLE_MAX * k:
+        size = round(HOUSE_TITLE * k * 2) / 2
+        h = min(h, round((2 * size * 1.2 / 72 + 0.1) * E))
+        anchor = "t"
+    # measured with the width tables in the deck's heading face
+    fonts, unknown = deck_fonts(prs)
+    face = fonts["heading"]
+    margin = UNKNOWN_FACE["width"] if "heading" in unknown else 1.0
+    m = layoutfit.Measure()
+    room_w = (w / E - 0.2) * 72
+    floor = max(round(size * 0.75 * 2) / 2, 12.0)
+
+    def need(pt):
+        lines = layoutfit._wrap(text, room_w / margin, face, pt, False, _MeasureRef(m)) if text else 1
+        return lines * pt * max(1.2, m.line_height(face)) / 72 + 0.1
+
+    fitted = size
+    while need(fitted) > h / E and fitted > floor:
+        fitted -= 0.5
+    if need(fitted) > h / E:
+        report["warnings"].append("The title is long for its box: shorten it")
+    if fitted < size:
+        report["shrunk"].append("title %g pt to %g pt" % (size, fitted))
+    title_ph.left, title_ph.top, title_ph.width, title_ph.height = x, y, w, h
+    tf = title_ph.text_frame
+    tf.text = text
+    body = tf._txBody.find(A + "bodyPr")
+    for child in list(body):
+        if child.tag in (A + "normAutofit", A + "spAutoFit", A + "noAutofit"):
+            body.remove(child)
+    etree.SubElement(body, A + "noAutofit")
+    if anchor:
+        body.set("anchor", anchor)
+    for para in tf.paragraphs:
+        para._p.get_or_add_pPr().set("algn", algn)
+        for run in para.runs:
+            run._r.get_or_add_rPr().set("sz", str(int(round(fitted * 100))))
+    return y + h
+
+
+class _MeasureRef:
+    """layoutfit._wrap reads widths through `.m`."""
+
+    def __init__(self, m):
+        self.m = m
+
+
 def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dump=None, label_half_step=False):
     slide = prs.slides.add_slide(layout)
     title_ph = None
@@ -300,14 +418,14 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             title_ph = ph
         elif t not in KEEP_PH:
             ph.element.getparent().remove(ph.element)
+    title_bottom = None
     if title_ph is not None:
-        title_ph.text_frame.text = entry.get("title") or ""
+        title_bottom = place_title(prs, slide, title_ph, entry.get("title") or "", report)
     elif entry.get("title"):
         report["warnings"].append("The layout has no title placeholder; the title was not placed")
 
     content = [s for s in page["shapes"] if s["kind"] != "ph"]
     top = min([s["y"] for s in content if "y" in s] + [min(s["y1"], s["y2"]) for s in content if "y1" in s] or [1.6])
-    title_bottom = (title_ph.top + title_ph.height) if title_ph is not None and title_ph.height else None
     place = pagexml.Place(prs.slide_width, prs.slide_height, top, title_bottom)
 
     slots_by_shape = {s["shape"]: s for s in page["slots"]}

@@ -325,6 +325,62 @@ class Beautify(unittest.TestCase):
             rep = json.loads(r.stdout)["rebuilt"][0]
             self.assertEqual(any("run into" in w for w in rep["warnings"]), warned, (warned, rep["warnings"]))
 
+    def _round_one_deck(self, path, n=3):
+        # a deck as round 1 of the Windows render had it: a 10 x 5.625 slide still typed screen4x3, its
+        # title layout moved down with no width written, the blank Office master's 44 pt title
+        prs = Presentation()
+        prs.slide_width, prs.slide_height = Inches(10), Inches(5.625)
+        lay = prs.slide_layouts[5]
+        for ph in lay.placeholders:
+            if "TITLE" in str(ph.placeholder_format.type):
+                ph.top, ph.height = Inches(0.9), Inches(1.4)
+        for i in range(n):
+            prs.slides.add_slide(lay).shapes.title.text = "A long working title that will not fit at forty-four points %d" % i
+        prs.save(path)
+
+    def test_the_file_check_fails_round_one_titles_and_the_writer_fixes_them(self):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        self._round_one_deck(self.deck)
+        faults = check_slide_fit.title_faults(Presentation(self.deck), check_slide_fit.theme_faces(Presentation(self.deck)), layoutfit.Measure())
+        self.assertTrue(any("screen4x3" in f for f in faults), faults)
+        self.assertTrue(any("no width" in f for f in faults), faults)
+        # the beautifier writes each title's box, size and alignment itself
+        self.write_plan(plan_for())
+        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = Presentation(self.out)
+        title = out.slides[1].shapes.title
+        self.assertGreater(title.width, 0)
+        faults = [f for f in check_slide_fit.title_faults(out, check_slide_fit.theme_faces(out), layoutfit.Measure()) if "slide 2:" in f]
+        self.assertEqual(faults, [])
+        # with the master's title box empty too, the library's frame stands in, and the report says so
+        prs = Presentation(self.deck)
+        for sp in prs.slide_master.element.iter("{http://schemas.openxmlformats.org/presentationml/2006/main}sp"):
+            ph = sp.find(".//{http://schemas.openxmlformats.org/presentationml/2006/main}ph")
+            if ph is not None and ph.get("type") == "title":
+                ext = sp.find(".//{http://schemas.openxmlformats.org/drawingml/2006/main}ext")
+                ext.set("cx", "0")
+        prs.save(self.deck)
+        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        rep = json.loads(r.stdout)["rebuilt"][0]
+        self.assertTrue(any("library's frame" in w for w in rep["warnings"]), rep["warnings"])
+        out = Presentation(self.out)
+        self.assertEqual([f for f in check_slide_fit.title_faults(out, check_slide_fit.theme_faces(out), layoutfit.Measure()) if "slide 2:" in f], [])
+
+    def test_a_blank_office_deck_gets_the_house_title_size_written(self):
+        make_deck(self.deck)                     # python-pptx's blank Office master: 44 pt titles
+        self.write_plan(plan_for())
+        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        title = Presentation(self.out).slides[1].shapes.title
+        p0 = title.text_frame.paragraphs[0]
+        self.assertEqual(p0.runs[0].font.size.pt, 24.0)
+        self.assertIsNotNone(p0._p.pPr.get("algn"))
+        body = title.text_frame._txBody.find("{http://schemas.openxmlformats.org/drawingml/2006/main}bodyPr")
+        self.assertIsNotNone(body.find("{http://schemas.openxmlformats.org/drawingml/2006/main}noAutofit"))
+        self.assertLessEqual(title.height, Inches(2 * 24 * 1.2 / 72 + 0.1) + 1)
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()

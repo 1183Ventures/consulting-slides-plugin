@@ -92,10 +92,83 @@ class _M:
         self.m = m
 
 
+def _title_sp(owner):
+    for sp in owner.element.iter("{%s}sp" % NS["p"]):
+        ph = sp.find(".//p:nvPr/p:ph", NS)
+        if ph is not None and ph.get("type") in ("title", "ctrTitle"):
+            return sp
+    return None
+
+
+def _xfrm(sp):
+    if sp is None:
+        return None
+    off, ext = sp.find("p:spPr/a:xfrm/a:off", NS), sp.find("p:spPr/a:xfrm/a:ext", NS)
+    if off is None or ext is None:
+        return None
+    return int(off.get("x")), int(off.get("y")), int(ext.get("cx")), int(ext.get("cy"))
+
+
+def _lvl1(sp, attr, child=None):
+    if sp is None:
+        return None
+    el = sp.find(".//a:lstStyle/a:lvl1pPr", NS)
+    if el is not None and child:
+        el = el.find("a:" + child, NS)
+    return None if el is None else el.get(attr)
+
+
+def title_faults(prs, faces, m):
+    """Each title as the file will draw it: its box (slide, then layout, then
+    master), its size (its runs, then layout, master, the master's title
+    style) and a stored autofit scale. A box with no width or height, or a
+    title that does not fit its box at that size, is a fault; so is a slide
+    size type that contradicts the slide's shape."""
+    out = []
+    sz_el = prs.part._element.find("p:sldSz", NS)
+    w_in, h_in = prs.slide_width / EMU, prs.slide_height / EMU
+    kind = sz_el.get("type") if sz_el is not None else None
+    if kind == "screen4x3" and abs(w_in / h_in - 4 / 3) > 0.02:
+        out.append("slide size says 4:3 (screen4x3) but the slide is %.3f x %.3f in" % (w_in, h_in))
+    for n, slide in enumerate(prs.slides, 1):
+        sp = _title_sp(slide)
+        if sp is None:
+            continue
+        layout = slide.slide_layout
+        lay, mas = _title_sp(layout), _title_sp(layout.slide_master)
+        box = _xfrm(sp) or _xfrm(lay) or _xfrm(mas)
+        text = " ".join("".join(t.text or "" for t in p.iter("{%s}t" % NS["a"])) for p in sp.findall(".//a:p", NS)).strip()
+        if not text:
+            continue
+        if box is None or box[2] <= 0 or box[3] <= 0:
+            out.append("slide %d: the title's box has no width or height" % n)
+            continue
+        runs = [r.get("sz") for r in sp.iter("{%s}rPr" % NS["a"]) if r.get("sz")]
+        style = layout.slide_master.element.find(".//p:txStyles/p:titleStyle/a:lvl1pPr/a:defRPr", NS)
+        sz = runs[0] if runs else (_lvl1(lay, "sz", "defRPr") or _lvl1(mas, "sz", "defRPr") or (style.get("sz") if style is not None else None))
+        size = int(sz) / 100 if sz else 44.0
+        fit = sp.find("p:txBody/a:bodyPr/a:normAutofit", NS)
+        if fit is not None and fit.get("fontScale"):
+            size *= int(fit.get("fontScale")) / 100000
+        ref = (lay if lay is not None else mas)
+        face = faces.get("+mj-lt", "Arial")
+        if face not in m.fonts:
+            face = "Arial"
+        bp = sp.find("p:txBody/a:bodyPr", NS)
+        ins_lr = sum(int(bp.get(k, 91440)) for k in ("lIns", "rIns")) / EMU if bp is not None else 0.2
+        ins_tb = sum(int(bp.get(k, 45720)) for k in ("tIns", "bIns")) / EMU if bp is not None else 0.1
+        width = max((box[2] / EMU - ins_lr) * 72, 4)
+        lines = layoutfit._wrap(text, width, face, size, False, _M(m))
+        need = lines * size * max(1.2, m.line_height(face)) / 72 + ins_tb
+        if need > box[3] / EMU + 0.01:
+            out.append("slide %d: the title needs %.2f in at %g pt (%d lines) in a %.2f in box" % (n, need, size, lines, box[3] / EMU))
+    return out
+
+
 def check(path, m):
     prs = Presentation(path)
     faces = theme_faces(prs)
-    out = {"boxes": 0, "taller": 0, "worst": -1.0, "missing": set(), "where": []}
+    out = {"boxes": 0, "taller": 0, "worst": -1.0, "missing": set(), "where": [], "titles": title_faults(prs, faces, m)}
     for n, slide in enumerate(prs.slides, 1):
         for sp in slide.shapes._spTree.iter("{%s}sp" % NS["p"]):
             if sp.find(".//p:txBody/a:bodyPr/a:spAutoFit", NS) is None:
@@ -133,10 +206,30 @@ def make_deck(path, wide, low_title, n, faces=None):
         set_theme_faces(prs, *faces)
     w, h = SIZES[wide]
     prs.slide_width, prs.slide_height = Inches(w), Inches(h)
+    # python-pptx's template says screen4x3; a resized deck must not (Windows render, 14 Nov 2026)
+    sz = prs.part._element.find("p:sldSz", NS)
+    if sz is not None and "type" in sz.attrib and abs(w / h - 4 / 3) > 0.02:
+        del sz.attrib["type"]
+    # the template's master and layouts are drawn for 10 x 7.5 in: another size gets them scaled, as a
+    # real Office deck of that size has them (else a 9 in title box sits at the left of a 13.333 in slide)
+    if abs(w - 10) > 0.01 or abs(h - 7.5) > 0.01:
+        fx, fy = w / 10, h / 7.5
+        for owner in [prs.slide_master] + list(prs.slide_layouts):
+            for xf in owner.element.iter("{%s}xfrm" % NS["a"]):
+                off, ext = xf.find("a:off", NS), xf.find("a:ext", NS)
+                if off is not None:
+                    off.set("x", str(round(int(off.get("x")) * fx)))
+                    off.set("y", str(round(int(off.get("y")) * fy)))
+                if ext is not None:
+                    ext.set("cx", str(round(int(ext.get("cx")) * fx)))
+                    ext.set("cy", str(round(int(ext.get("cy")) * fy)))
     lay = prs.slide_layouts[5]
     if low_title:
         for ph in lay.placeholders:
             if "TITLE" in str(ph.placeholder_format.type):
+                # the box the layout inherits, kept whole: setting only top and height wrote a zero width
+                left, width = ph.left, ph.width
+                ph.left, ph.width = left, width
                 ph.top, ph.height = Inches(0.9), Inches(1.4)
     for i in range(n):
         prs.slides.add_slide(lay).shapes.title.text = "Slide %d" % (i + 1)
@@ -202,11 +295,11 @@ def main():
     total = 0
     for path in paths:
         r = check(path, m)
-        total += r["taller"]
-        print("%-36s boxes %4d | text taller than its box %3d | worst %+.3f in%s" % (
-            os.path.basename(path), r["boxes"], r["taller"], r["worst"],
+        total += r["taller"] + len(r["titles"])
+        print("%-36s boxes %4d | text taller than its box %3d | worst %+.3f in | title faults %d%s" % (
+            os.path.basename(path), r["boxes"], r["taller"], r["worst"], len(r["titles"]),
             " | faces without tables: " + ", ".join(sorted(r["missing"])) if r["missing"] else ""))
-        for w in r["where"][:5]:
+        for w in (r["where"] + r["titles"])[:6]:
             print("    " + w)
     return total
 
