@@ -25,6 +25,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", 
 READ = os.path.join(ROOT, "read_deck.py")
 BEAUTIFY = os.path.join(ROOT, "beautify_deck.py")
 VECTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors-layoutfit.json")
+EDGE_VECTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors-layoutfit-edge.json")
 sys.path.insert(0, ROOT)
 import layoutfit  # noqa: E402
 
@@ -172,16 +173,77 @@ class Beautify(unittest.TestCase):
             rep = json.loads(r.stdout)["rebuilt"][0]
             self.assertEqual((rep["layout"], rep["text_up"]), ([], 0))
 
+    def test_fitted_boxes_keep_resize_to_fit_text(self):
+        make_deck(self.deck)
+        self.write_plan(plan_for())
+        counts = []
+        for extra in ((), ("--no-fit",)):
+            r = run(BEAUTIFY, self.deck, self.plan, self.out, *extra)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            xml = b"".join(Presentation(self.out).slides[1].part.blob.split(b"\n"))
+            counts.append(xml.count(b"<a:spAutoFit/>"))
+        self.assertGreater(counts[0], 0)
+        self.assertEqual(counts[1], 0)
+
+    def test_a_face_without_tables_is_fitted_with_room_and_not_raised(self):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        for faces, unknown in ((("Poppins", "Poppins"), True), (("Century Gothic", "Century Gothic"), False)):
+            prs = Presentation()
+            prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+            check_slide_fit.set_theme_faces(prs, *faces)
+            for _ in range(3):
+                prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = "T"
+            prs.save(self.deck)
+            self.write_plan(plan_for())
+            r = run(BEAUTIFY, self.deck, self.plan, self.out)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            rep = json.loads(r.stdout)["rebuilt"][0]
+            said = any("Poppins has no width table" in w for w in rep["warnings"])
+            self.assertEqual(said, unknown, rep["warnings"])
+            if unknown:
+                self.assertEqual(rep["text_up"], 0)
+
+    def test_every_fitted_box_holds_its_text_on_a_4_3_deck(self):
+        # the saved slide, measured as drawn (size, width, insets), in Arial
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            pages = json.load(fh)["pages"]
+        check_slide_fit.make_deck(self.deck, False, False, len(pages), ("Georgia", "Arial"))
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            json.dump(check_slide_fit.plan_for(pages, 1.0), fh)
+        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        res = check_slide_fit.check(self.out, layoutfit.Measure())
+        self.assertGreater(res["boxes"], 100)
+        self.assertEqual(res["taller"], 0, res["where"])
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
         plan["pages"][0]["slots"]["s2"] = SUMMARY[0][1] + ". " + SUMMARY[0][1] * 4
         self.write_plan(plan)
-        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        # the shrink step alone: one size for the kind of text
+        r = run(BEAUTIFY, self.deck, self.plan, self.out, "--no-fit")
         self.assertEqual(r.returncode, 0, r.stderr)
         shrunk = json.loads(r.stdout)["rebuilt"][0]["shrunk"]
         sizes = {line.split(" to ")[1] for line in shrunk if line.startswith(("s2 ", "s4 ", "s6 "))}
         self.assertEqual(len(sizes), 1, shrunk)
+        # with the pass, every shrunk line tells the size the slide carries
+        # (the fill may give some back), and a text not listed kept its size
+        for extra in ((), ("--no-fit",)):
+            r = run(BEAUTIFY, self.deck, self.plan, self.out, *extra)
+            rep = json.loads(r.stdout)["rebuilt"][0]
+            said = {line.split(" ")[0]: float(line.split(" to ")[1].split(" ")[0]) for line in rep["shrunk"]}
+            slide = Presentation(self.out).slides[1]
+            for sh in slide.shapes:
+                if not sh.name.startswith("Beautify executive-summary s") or not sh.has_text_frame:
+                    continue
+                sid = sh.name.split()[-1]
+                sz = next((rn.font.size.pt for p in sh.text_frame.paragraphs for rn in p.runs if rn.font.size), None)
+                if sid in said:
+                    self.assertEqual(sz, said[sid], (extra, sid, rep["shrunk"]))
 
 
 
@@ -195,11 +257,17 @@ def rounded(x):
     return {k: rounded(v) for k, v in x.items()}
 
 
+_MISSING = object()
+
+
 def first_difference(a, b, path=""):
-    """None when a and b agree (numbers within 0.0002), else where they part."""
+    """None when a and b agree (numbers within 0.0002), else where they part.
+    A key one side lacks is a difference, even against a null."""
+    if a is _MISSING or b is _MISSING:
+        return None if a is b else "%s: present on one side only" % path
     if isinstance(a, dict) and isinstance(b, dict):
         for k in sorted(set(a) | set(b)):
-            d = first_difference(a.get(k), b.get(k), path + "." + k)
+            d = first_difference(a.get(k, _MISSING), b.get(k, _MISSING), path + "." + k)
             if d:
                 return d
         return None
@@ -238,6 +306,21 @@ class LayoutFitParity(unittest.TestCase):
             with self.subTest(page=v["id"]):
                 self.assertIsNone(first_difference(rounded(shapes), v["expect"]))
                 self.assertEqual(r["size"], v["size"])
+
+    def test_values_read_as_js_reads_them(self):
+        # odd whitespace, an empty {} fill, numeric run text, an empty [] line
+        with open(EDGE_VECTORS, encoding="utf-8") as fh:
+            edge = json.load(fh)["vectors"]
+        self.assertEqual(len(edge), 16)
+        for v in edge:
+            shapes, r = self.run_page(v, page_id=v["page"])
+            with self.subTest(case=v["id"]):
+                self.assertIsNone(first_difference(rounded(shapes), v["expect"]))
+                self.assertEqual(r["size"], v["size"])
+
+    def test_comparer_tells_missing_from_null(self):
+        self.assertIsNotNone(first_difference({"a": None}, {}))
+        self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))
 
     def test_caps_hold(self):
         capped = [v for v in self.vectors if v["id"] in layoutfit.CAPS]

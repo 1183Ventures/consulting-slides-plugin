@@ -100,16 +100,26 @@ class Measure:
         return self.face(font).get("lineHeight") or 1.2
 
 
-class ScaledMeasure(Measure):
-    """Widths times `factor`: text on a deck whose fonts scale more than its
-    width (a 4:3 slide) wraps as if wider, so the pass sees the deck's breaks."""
+class SlideMeasure(Measure):
+    """Widths as a deck of another shape will draw them, in the page's inches:
+    each text measured at the size the slide carries (`slide_pt`, the writer's
+    own rounding and floor) over the width scale `sx`, times `margin` for what
+    one model leaves out (insets and indents scale with the fonts, paragraph
+    spacing does not shrink under a low title)."""
 
-    def __init__(self, base, factor):
+    def __init__(self, base, slide_pt, sx, margin=1.0, line_floor=0):
         self.index, self.n, self.fonts = base.index, base.n, base.fonts
-        self.factor = factor
+        self.base = base
+        self.slide_pt, self.sx, self.margin, self.line_floor = slide_pt, sx, margin, line_floor
+
+    def face(self, font):
+        return self.base.face(font)
 
     def width(self, text, font, size, bold):
-        return Measure.width(self, text, font, size, bold) * self.factor
+        return self.base.width(text, font, self.slide_pt(size), bold) / self.sx * self.margin
+
+    def line_height(self, font):
+        return max(self.base.line_height(font), self.line_floor)
 
 
 class _O:
@@ -132,6 +142,38 @@ def _num(x, digits):
     return float(to_fixed(x, digits))
 
 
+# JS's \s and String.prototype.trim: these characters and no others (Python's
+# own \s adds U+001C to U+001F and U+0085 and leaves out U+FEFF)
+JS_SPACE = "\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+_TRIM = re.compile("^[%s]+|[%s]+$" % (JS_SPACE, JS_SPACE))
+
+
+def js_truthy(v):
+    """JS truthiness: an empty {} or [] is true, 0, NaN, "" and null are not."""
+    if v is None or v is False:
+        return False
+    if isinstance(v, (int, float)):
+        return v == v and v != 0
+    if isinstance(v, str):
+        return v != ""
+    return True
+
+
+def js_str(v):
+    """JS String(v) for what a run's text can hold."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float):
+        if v != v:
+            return "NaN"
+        if v in (float("inf"), float("-inf")):
+            return "Infinity" if v > 0 else "-Infinity"
+        if v.is_integer() and abs(v) < 1e21:
+            return str(int(v))
+        return repr(v)
+    return str(v)
+
+
 # ---- shapes -----------------------------------------------------------------
 
 def bottom(s):
@@ -147,18 +189,18 @@ def _paras(s):
 
 
 def has_text(s):
-    return any(r.get("t") and str(r.get("t")).strip() for p in _paras(s) for r in p.get("runs") or [])
+    return any(js_truthy(r.get("t")) and _TRIM.sub("", js_str(r.get("t"))) for p in _paras(s) for r in p.get("runs") or [])
 
 
 def is_text_box(s):
     t = s.get("text") or {}
-    return (s.get("kind") == "sp" and (s.get("geom") or "rect") == "rect" and not s.get("rot")
-            and not s.get("fill") and not s.get("line") and has_text(s) and not t.get("vert"))
+    return (s.get("kind") == "sp" and (s.get("geom") or "rect") == "rect" and not js_truthy(s.get("rot"))
+            and not js_truthy(s.get("fill")) and not js_truthy(s.get("line")) and has_text(s) and not js_truthy(t.get("vert")))
 
 
 def is_card(s):
-    return (s.get("kind") == "sp" and (s.get("geom") or "rect") in CARD_GEOMS and not s.get("rot")
-            and bool(s.get("fill")) and not has_text(s) and s["w"] > 0.6 and s["h"] > 0.6)
+    return (s.get("kind") == "sp" and (s.get("geom") or "rect") in CARD_GEOMS and not js_truthy(s.get("rot"))
+            and js_truthy(s.get("fill")) and not has_text(s) and s["w"] > 0.6 and s["h"] > 0.6)
 
 
 def inside(a, c):
@@ -223,12 +265,12 @@ def _bold(runs):
 
 
 def _indent(p):
-    return (p.get("level") or 0) * 0.2 + (0.17 if p.get("bullet") else 0)
+    return (p.get("level") or 0) * 0.2 + (0.17 if js_truthy(p.get("bullet")) else 0)
 
 
 _BREAK = re.compile(r"\r?\n|\v")
-_WORDS = re.compile(r"(\s+)")
-_SPACE = re.compile(r"^\s+$")
+_WORDS = re.compile("([%s]+)" % JS_SPACE)
+_SPACE = re.compile("^[%s]+$" % JS_SPACE)
 
 
 def _wrap(text, width, font, size, bold, o):
@@ -262,7 +304,7 @@ def text_height(s, o, raw=False):
         font = _font(runs, o)
         bold = _bold(runs)
         width = max(room - _indent(p) * 72, 4)
-        text = "".join(str(r["t"]) for r in runs)
+        text = "".join(js_str(r["t"]) for r in runs)
         lines = 1 if t.get("wrap") is False else _wrap(text, width, font, size, bold, o)
         spacing = p["spacing"] / 100 if p.get("spacing") else 1
         pts += lines * size * max(o.m.line_height(font), 0 if raw else MIN_LINE) * spacing
@@ -284,7 +326,7 @@ def lines_of(s, o):
             lines += 1
             continue
         width = max(room - _indent(p) * 72, 4)
-        lines += _wrap("".join(str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o)
+        lines += _wrap("".join(js_str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o)
     return lines
 
 
@@ -313,7 +355,7 @@ def _ink_spans(s, o):
         runs = _runs(p)
         if not runs:
             continue
-        w = o.m.width("".join(str(r["t"]) for r in runs), _font(runs, o), _size(runs),
+        w = o.m.width("".join(js_str(r["t"]) for r in runs), _font(runs, o), _size(runs),
                       all(r.get("b") for r in runs)) / 72 + _indent(p)
         if w > inner + 0.01 and t.get("wrap") is not False:
             continue
@@ -328,7 +370,7 @@ def _ink_spans(s, o):
 def sideways_hits(shapes, o):
     """One-line paragraphs whose ink comes within SIDE_GAP (3% of a long
     line's width) of a filled shape beside them."""
-    solids = [f for f in shapes if f.get("kind") == "sp" and f.get("fill") and not f.get("rot") and not is_text_box(f)]
+    solids = [f for f in shapes if f.get("kind") == "sp" and js_truthy(f.get("fill")) and not js_truthy(f.get("rot")) and not is_text_box(f)]
     n = 0
     for s in shapes:
         if not is_text_box(s):
@@ -622,7 +664,7 @@ def _fits(shapes, o):
             if overlap_x(s, lx) >= 0.2 and ts + 0.02 < L["y1"] < tb - 0.02:
                 return False
         for f in shapes:
-            if f.get("kind") != "sp" or not f.get("fill") or f.get("rot") or f is s or inside(s, f) or overlap_x(s, f) < 0.2:
+            if f.get("kind") != "sp" or not js_truthy(f.get("fill")) or js_truthy(f.get("rot")) or f is s or inside(s, f) or overlap_x(s, f) < 0.2:
                 continue
             if ts + 0.02 < f["y"] < tb - 0.02 and not (s["y"] >= f["y"] - 0.02 and s["y"] < bottom(f)):
                 return False

@@ -64,9 +64,11 @@ python3 scripts/beautify_deck.py "<deck.pptx>" plan.json "<deck> (beautified).pp
 
 It writes a new file. The original is never changed. Each planned slide is replaced in place by its rebuilt page; add `--keep-originals` to keep each original right after it, hidden, for comparison. If the plan has a mistake (an unknown page or slot, a slot left open), the script stops and says what to fix: fix the plan and run it again.
 
-The report lists, for each rebuilt slide, the slots filled, kept and cleared, any text made smaller to fit (one size for each kind of text on the page, so the page stays even), and warnings for text that may still overflow. Shorten that text in the plan and run again until there are no overflow warnings.
+The report lists, for each rebuilt slide, the slots filled, kept and cleared, any text that ended smaller than the page drew it (as the slide carries it, after the layout pass below), and warnings for text that may still overflow. Shorten that text in the plan and run again until there are no overflow warnings.
 
 Then each page gets the library's own layout pass, so it reads full and even with the user's words: every plain text box is fitted to its text (Resize Shape to Fit Text stays on), a row of cards or a list of rows that ends the page is spread to the bottom of the body (never closer than drawn), and body text is raised half a point at a time while everything still fits (9 to 13.5 pt text only, never past 14 pt). The report says what it did under `layout` and how many points the body text went up under `text_up`. Add `--no-fit` to draw the pages exactly as the library drew them, for comparison.
+
+Text is measured with width tables for the deck's theme faces, at the size each text will have on the slide: Arial, Georgia, Verdana, Tahoma, Calibri, Calibri Light, Aptos, Cambria, Century Gothic, Franklin Gothic Book, Tw Cen MT and Times New Roman. A deck whose shape differs from the library's 16:9 (4:3, or a title that ends low) keeps 3% more room. When the deck uses a face without a table (Segoe UI, Montserrat, Poppins, Aptos Display and others), the page is fitted as if the face were 15% wider with taller lines, its text is never enlarged, and the report warns: tell the user to check those pages in PowerPoint. Kinds of text keep one size each, except small labels in diagrams (under 1.2 in wide), which keep the size the library gave them while text beside them may grow.
 
 ## 5. Check the result
 

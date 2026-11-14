@@ -61,6 +61,10 @@ KEEP_PH = (PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMB
 MIN_SIZE = {"heading": 10, "body": 9, "label": 8, "fixed": 8}
 CHAR_W = 0.52   # average character width, in ems, for the fit estimate
 LINE_H = 1.2
+SLIDE_MARGIN = 1.03   # width room for decks not at the library's scale (Reviewer, 13 Nov 2026)
+# a theme face without a width table: the widest common face measured is 15%
+# wider than Arial (Poppins), and some set lines up to 1.35 of the size
+UNKNOWN_FACE = {"width": 1.15, "line": 1.35}
 
 
 class PlanError(Exception):
@@ -179,33 +183,51 @@ def new_shape_id(slide):
 
 
 def deck_fonts(prs):
-    """The theme's heading and body faces, where the width tables know them
-    (else the library's Georgia and Arial, which the pass measures with)."""
-    fonts = dict(layoutfit.DEFAULT_FONTS)
+    """The theme's heading and body faces -> (faces to measure with, faces the
+    width tables lack). A face the tables lack is measured as the library's
+    Georgia or Arial, with the room UNKNOWN_FACE gives."""
+    fonts, unknown = dict(layoutfit.DEFAULT_FONTS), {}
     try:
         part = prs.slide_master.part.part_related_by(
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
         root = etree.fromstring(part.blob)
-        ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
-        known = layoutfit.Measure().fonts
-        for key, tag in (("heading", "majorFont"), ("body", "minorFont")):
-            face = root.xpath(".//a:fontScheme/a:%s/a:latin/@typeface" % tag, namespaces=ns)
-            if face and face[0] in known:
-                fonts[key] = face[0]
     except (KeyError, ValueError, etree.XMLSyntaxError):
-        pass
-    return fonts
+        return fonts, unknown
+    ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+    known = layoutfit.Measure().fonts
+    for key, tag in (("heading", "majorFont"), ("body", "minorFont")):
+        face = root.xpath(".//a:fontScheme/a:%s/a:latin/@typeface" % tag, namespaces=ns)
+        if not face or not face[0]:
+            continue
+        if face[0] in known:
+            fonts[key] = face[0]
+        else:
+            unknown[key] = face[0]
+    return fonts, unknown
 
 
-def lay_out(shapes, page, place, fonts, report):
+def lay_out(shapes, page, place, deck_faces, report):
     """layoutfit.py on the filled page, in the page's own inches: text boxes
     fitted to their text, rows and cards spread to the body's bottom, body
     text raised while the page has room (the library's own pass)."""
-    scale = min(place.s, place.sy * place.k)
-    measure = layoutfit.Measure()
-    if abs(scale / place.sx - 1) > 0.01:
-        measure = layoutfit.ScaledMeasure(measure, scale / place.sx)
-    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"])
+    fonts, unknown = deck_faces
+    # text measured as the slide will carry it; a deck not drawn at the
+    # library's own scale (4:3, a band squeezed under a low title) keeps 3%
+    # more room, which the Reviewer measured covers what one model leaves out
+    plain = all(abs(v - 1) < 0.005 for v in (place.sx, place.sy, place.k))
+    margin, floor, max_raise = (1.0 if plain else SLIDE_MARGIN), 0, None
+    # a face the tables lack, used by this page's text: fitted with room for a
+    # face up to 15% wider and taller lines, and its text never raised
+    used = {("heading" if r.get("font") == "head" else "body")
+            for s in shapes if layoutfit.is_text_box(s)
+            for p in s["text"].get("paras", []) for r in p.get("runs", [])}
+    missing = sorted({unknown[k] for k in used if k in unknown})
+    if missing:
+        margin, floor, max_raise = margin * UNKNOWN_FACE["width"], UNKNOWN_FACE["line"], 0
+        report["warnings"].append("The deck's font %s has no width table: the page was fitted with extra room and "
+                                  "its text was not enlarged; check it in PowerPoint" % " and ".join(missing))
+    measure = layoutfit.SlideMeasure(layoutfit.Measure(), place.pt, place.sx, margin, floor)
+    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise)
     fitted = sum(1 for c in r["changed"] if c["what"] == "height to its text")
     report["layout"] = (["%d text boxes fitted to their text" % fitted] if fitted else []) + \
         [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
@@ -271,14 +293,13 @@ def build_slide(prs, layout, entry, page, report, fit=True):
 
     # one size per role on the page, written into the page in its own points
     scale = min(place.s, place.sy * place.k)
-    shapes, slots_of = [], []
+    shapes, slots_of, drawn_at = [], [], []
     for i, s, slot, fitted in drafts:
         s = copy.deepcopy(s)
+        drawn_at.append(place.pt(fitted[0][1]) if fitted is not None else None)
         if fitted is not None:
-            key, ok = fitted
-            size = sizes[key]
-            if size < place.pt(key[1]):
-                report["shrunk"].append("%s %g pt to %g pt" % (slot["id"], place.pt(key[1]), size))
+            size = sizes[fitted[0]]
+            if size < place.pt(fitted[0][1]):
                 for p in (s.get("text") or {}).get("paras", []):
                     for r in p.get("runs", []):
                         r["sz"] = size / scale
@@ -287,6 +308,14 @@ def build_slide(prs, layout, entry, page, report, fit=True):
     # then the library's layout pass: boxes fitted, the page spread and filled
     if fit:
         lay_out(shapes, page, place, deck_fonts(prs), report)
+    # what shrank, as the slide carries it once the pass is done (the fill
+    # may have given some of it back)
+    for s, slot, own in zip(shapes, slots_of, drawn_at):
+        if own is None:
+            continue
+        final = next((r.get("sz") for p in (s.get("text") or {}).get("paras", []) for r in p.get("runs", []) if r.get("sz")), None)
+        if final is not None and place.pt(final) < own:
+            report["shrunk"].append("%s %g pt to %g pt" % (slot["id"], own, place.pt(final)))
 
     # draw
     tree = slide.shapes._spTree

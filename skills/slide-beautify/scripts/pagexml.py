@@ -235,7 +235,12 @@ def body_pr_xml(text, place):
     ]
     if text.get("vert"):
         attrs.append('vert="%s"' % text["vert"])
-    return "<a:bodyPr %s><a:noAutofit/></a:bodyPr>" % " ".join(attrs)
+    if text.get("anchorCtr"):
+        attrs.append('anchorCtr="1"')
+    # as the library writes it (ooxml.js bodyPrXml): Resize Shape to Fit Text
+    # for a box the layout pass fitted, Shrink Text on Overflow where asked
+    fit = {"shrink": "<a:normAutofit/>", "resize": "<a:spAutoFit/>"}.get(text.get("autofit"), "<a:noAutofit/>")
+    return "<a:bodyPr %s>%s</a:bodyPr>" % (" ".join(attrs), fit)
 
 
 def text_body_xml(text, place, size_override=None):
