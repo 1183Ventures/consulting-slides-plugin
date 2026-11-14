@@ -228,16 +228,37 @@ def lay_out(shapes, page, place, deck_faces, report):
         report["warnings"].append("The deck's font %s has no width table: the page was fitted with extra room and "
                                   "its text was not enlarged; check it in PowerPoint" % " and ".join(missing))
     measure = layoutfit.SlideMeasure(layoutfit.Measure(), place.pt, place.sx, margin, floor)
+    drawn = copy.deepcopy(shapes)
     r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise)
     fitted = sum(1 for c in r["changed"] if c["what"] == "height to its text")
     report["layout"] = (["%d text boxes fitted to their text" % fitted] if fitted else []) + \
         [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
     report["text_up"] = r["size"]
     r["measure"] = measure
-    r["fits"] = layoutfit.page_fits(shapes, fonts=fonts, measure=measure) and words_fit(shapes, measure, fonts)
-    if not r["fits"]:
+    up = rises(drawn, shapes, measure, fonts)
+    down = not (layoutfit.page_fits(shapes, fonts=fonts, measure=measure) and words_fit(shapes, measure, fonts))
+    r["fits"] = not (up or down)
+    if down:
         report["warnings"].append("Texts on this page may run into each other or past the bottom: shorten the longest")
+    if up:
+        report["warnings"].append("A text on this page grows up into the title area: shorten it")
     return r
+
+
+def rises(drawn, shapes, measure, fonts):
+    """A text that starts above both the body's top and the box the page drew
+    for it (a box anchored at its foot, its text growing up into the title band). The page
+    check otherwise looks only down (Reviewer, 14 Nov 2026: big-numbers at
+    1.4 times its words)."""
+    o = layoutfit._O(measure, fonts, layoutfit.BODY, None)
+    for before, after in zip(drawn, shapes):
+        if not (layoutfit.is_text_box(before) and layoutfit.is_text_box(after)):
+            continue
+        # the box as the page drew it: long words can already overflow it upward
+        limit = min(before["y"], layoutfit.BODY["top"])
+        if layoutfit.text_top(after, o) < limit - 0.02:
+            return True
+    return False
 
 
 def words_fit(shapes, measure, fonts):

@@ -249,6 +249,20 @@ class Beautify(unittest.TestCase):
                         gained += (rb.get("sz") or 12) > (ra.get("sz") or 12) + 1e-9
         self.assertGreater(gained, 0)
 
+    def test_a_text_growing_into_the_title_is_warned(self):
+        # big-numbers at 1.4 times its words: a figure anchored at its foot grows up past the body's top
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            big = [p for p in json.load(fh)["pages"] if p["id"] == "big-numbers"]
+        for f, warned in ((1.0, False), (1.4, True)):
+            check_slide_fit.make_deck(self.deck, True, False, 1, None)
+            with open(self.plan, "w", encoding="utf-8") as fh:
+                json.dump(check_slide_fit.plan_for(big, f), fh)
+            r = run(BEAUTIFY, self.deck, self.plan, self.out)
+            rep = json.loads(r.stdout)["rebuilt"][0]
+            self.assertEqual(any("title area" in w for w in rep["warnings"]), warned, (f, rep["warnings"]))
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
@@ -388,6 +402,21 @@ class LayoutFitParity(unittest.TestCase):
         self.assertGreaterEqual(sum(1 for p in pages for s in p["shapes"] if s.get("adj")), 20)
         self.assertEqual(next(s for s in next(p for p in pages if p["id"] == "two-options")["shapes"]
                               if s.get("geom") == "roundRect")["adj"], {"adj": 50000})
+
+    def test_sample_roles(self):
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            pages = {p["id"]: p for p in json.load(fh)["pages"]}
+        role = lambda pid, sample: next(s["role"] for s in pages[pid]["slots"] if s.get("sample") == sample)
+        # a wide figure is the user's to replace; badges and numeral columns stay fixed
+        self.assertEqual(role("kpi-tiles", "64"), "heading")
+        self.assertEqual(role("key-takeaways", "1"), "fixed")
+        self.assertEqual(role("decisions", "1"), "fixed")
+        self.assertEqual(role("swot", "S"), "fixed")
+        # texts drawn alike in one row share a role
+        scr = pages["situation-complication-resolution"]
+        leads = [s["role"] for s in scr["slots"] if s.get("sample", "").startswith(("What everyone", "What changed", "What we propose"))]
+        self.assertEqual(len(leads), 3)
+        self.assertEqual(len(set(leads)), 1, leads)
 
     def test_comparer_tells_missing_from_null(self):
         self.assertIsNotNone(first_difference({"a": None}, {}))

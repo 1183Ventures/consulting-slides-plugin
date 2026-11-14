@@ -54,6 +54,7 @@ SAMPLE = {
     "kpi-tiles": "KPI tiles: a few metrics, each with a value and a label",
 }
 
+BADGE_W = 1.2   # inches: a numeral this narrow or narrower is a badge, kept as drawn
 NUMBERING = re.compile(r"^(\d{1,2}|0\d|[A-Z]|[ivxIVX]{1,4})[.)]?$")
 
 
@@ -96,7 +97,9 @@ def slots_of(page):
         r = first_run(s)
         size = r.get("sz") or 12
         paras = [p for p in s["text"]["paras"] if any(x.get("t") for x in p.get("runs", []))]
-        if NUMBERING.match(text):
+        # a numeral or letter is fixed only as a badge or a numeral column (narrow, as
+        # layoutfit's labels): a wide "64" is a figure the user's own replaces (Reviewer, 14 Nov 2026)
+        if NUMBERING.match(text) and s["w"] <= BADGE_W:
             role = "fixed"
         elif r.get("b") or size >= 16:
             role = "heading"
@@ -112,7 +115,21 @@ def slots_of(page):
             slot["bullets"] = True
         if len(paras) > 1:
             slot["paras"] = len(paras)
+        slot["_row"] = (round(s.get("y", 0) * 50), size, bool(r.get("b")), r.get("color") or "")
         slots.append(slot)
+    # texts drawn alike in one row (one top, size, weight and colour) share a role: the
+    # row's most common, body on a tie (Reviewer, 14 Nov 2026: SCR's lead-ins were sized apart)
+    rows = {}
+    for slot in slots:
+        if slot.get("role") not in ("fixed", "title", "source") and "_row" in slot:
+            rows.setdefault(slot["_row"], []).append(slot)
+    for row in rows.values():
+        roles = [x["role"] for x in row]
+        best = max(set(roles), key=lambda r: (roles.count(r), r == "body"))
+        for x in row:
+            x["role"] = best
+    for slot in slots:
+        slot.pop("_row", None)
     return slots
 
 
