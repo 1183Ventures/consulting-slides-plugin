@@ -14,11 +14,16 @@ measure, which rounds a hair differently) and the same line spacing. A
 character the font lacks (a check mark, an arrow) takes a full em, as in the
 old tables: another face draws it, and a full em is the safe side.
 
-Only metrics are kept (no outlines, no font data), from fonts installed on
-this Mac: the Microsoft faces that ship inside PowerPoint and the system's
-own. Nothing is downloaded.
+Only metrics are kept (no outlines, no font data), from fonts on this Mac:
+the Microsoft faces that ship inside PowerPoint, the system's own, and the
+cloud fonts Office has cached (CLOUD: picked by family and style from the
+font's own name table, newest file first). Nothing is downloaded. A cloud
+face's line is the larger of its Mac (hhea) and Windows (OS/2 win) figures,
+the safe side until a Windows render says which PowerPoint uses. The file
+records where and when each table was read ("sources").
 """
 
+import datetime
 import json
 import os
 import struct
@@ -44,6 +49,15 @@ FACES = {  # common Office theme faces (Reviewer, 13 Nov 2026: decks in other fa
     "Franklin Gothic Book": (PPT + "/Franklin Gothic Book.ttf", PPT + "/Franklin Gothic Demi.ttf"),
     "Tw Cen MT": (PPT + "/Tw Cen MT.ttf", PPT + "/Tw Cen MT Bold.ttf"),
     "Times New Roman": (SUPP + "/Times New Roman.ttf", SUPP + "/Times New Roman Bold.ttf"),
+}
+
+CLOUD_DIR = os.path.expanduser("~/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
+CLOUD = {  # face -> folder in Office's cloud font cache
+    "Aptos Display": "Aptos Display",   # the heading face of PowerPoint's default theme (Microsoft)
+    "Poppins": "Poppins",               # open licence (SIL OFL)
+    "Montserrat": "Montserrat",         # open licence (SIL OFL)
+    "Roboto": "Roboto",                 # open licence (Apache 2.0)
+    "DM Sans": "DM Sans",               # open licence (SIL OFL)
 }
 
 
@@ -140,10 +154,54 @@ class Font:
     def line_height(self):
         return round((self.ascender - self.descender + self.line_gap) / self.upm, 4)
 
+    def win_line_height(self):
+        os2 = self.table("OS/2")
+        asc, desc = struct.unpack(">HH", os2[74:78])
+        return round((asc + desc) / self.upm, 4)
 
-def table_for(regular, bold, chars):
+    def style(self):
+        """(family, subfamily, weight, italic) from the name and OS/2 tables."""
+        t = self.table("name")
+        count, start = struct.unpack(">HH", t[2:6])
+        names = {}
+        for i in range(count):
+            pid, eid, lid, nid, length, off = struct.unpack(">HHHHHH", t[6 + 12 * i:18 + 12 * i])
+            raw = t[start + off:start + off + length]
+            if pid == 3:
+                names.setdefault(nid, raw.decode("utf-16-be", "replace"))
+            elif pid == 1 and nid not in names:
+                names[nid] = raw.decode("mac_roman", "replace")
+        os2 = self.table("OS/2")
+        weight = struct.unpack(">H", os2[4:6])[0]
+        italic = bool(struct.unpack(">H", os2[62:64])[0] & 1)
+        # the legacy family (name 1) carries a cut's name ("Aptos Display"); the typographic one does not
+        return names.get(1) or names.get(16, ""), names.get(2) or names.get(17, ""), weight, italic
+
+
+def table_for(regular, bold, chars, safe_line=False):
     r, b = Font(regular), Font(bold)
-    return {"lineHeight": r.line_height(), "regular": r.widths(chars), "bold": b.widths(chars)}
+    line = max(r.line_height(), r.win_line_height()) if safe_line else r.line_height()
+    return {"lineHeight": line, "regular": r.widths(chars), "bold": b.widths(chars)}
+
+
+def cloud_pair(face):
+    """(regular, bold) files of a cloud face: upright, weight 400 and 700, newest first."""
+    folder = os.path.join(CLOUD_DIR, CLOUD[face])
+    if not os.path.isdir(folder):
+        return None
+    found = {}
+    for name in sorted(os.listdir(folder), key=lambda n: -os.path.getmtime(os.path.join(folder, n))):
+        path = os.path.join(folder, name)
+        try:
+            fam, sub, weight, italic = Font(path).style()
+        except (KeyError, struct.error, OSError):
+            continue
+        if italic or fam.lower() != face.lower():
+            continue
+        for want in (400, 700):
+            if weight == want and want not in found:
+                found[want] = path
+    return (found[400], found[700]) if 400 in found and 700 in found else None
 
 
 def main():
@@ -166,12 +224,24 @@ def main():
     if "--write" in sys.argv:
         if bad:
             sys.exit("The reader does not reproduce the existing tables: nothing written")
+        today = datetime.date.today().isoformat()
+        sources = tables.setdefault("sources", {})
         for face, (reg, bold) in FACES.items():
             if not (os.path.exists(reg) and os.path.exists(bold)):
                 print("skip", face, "(font files not on this Mac)")
                 continue
             tables["fonts"][face] = table_for(reg, bold, chars)
+            sources[face] = "widths and line (Mac hhea) read %s from %s and %s" % (today, os.path.basename(reg), os.path.basename(bold))
             print("added", face, tables["fonts"][face]["lineHeight"])
+        for face in CLOUD:
+            pair = cloud_pair(face)
+            if not pair:
+                print("skip", face, "(no regular and bold in Office's cloud font cache)")
+                continue
+            tables["fonts"][face] = table_for(pair[0], pair[1], chars, safe_line=True)
+            sources[face] = "widths and line (larger of Mac hhea and Windows OS/2) read %s from Office's cloud font cache on a Mac (%s, %s)" % (
+                today, os.path.basename(pair[0]), os.path.basename(pair[1]))
+            print("added", face, tables["fonts"][face]["lineHeight"], "(cloud)")
         with open(TABLES, "w", encoding="utf-8") as fh:
             json.dump(tables, fh, ensure_ascii=True, separators=(",", ":"))  # escaped: no literal dash characters in the file
     return bad

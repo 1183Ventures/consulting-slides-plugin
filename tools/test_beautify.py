@@ -188,7 +188,7 @@ class Beautify(unittest.TestCase):
     def test_a_face_without_tables_is_fitted_with_room_and_not_raised(self):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import check_slide_fit
-        for faces, unknown in ((("Poppins", "Poppins"), True), (("Century Gothic", "Century Gothic"), False)):
+        for faces, unknown in ((("Segoe UI", "Segoe UI"), True), (("Poppins", "Poppins"), False), (("Aptos Display", "Aptos"), False)):
             prs = Presentation()
             prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
             check_slide_fit.set_theme_faces(prs, *faces)
@@ -199,25 +199,27 @@ class Beautify(unittest.TestCase):
             r = run(BEAUTIFY, self.deck, self.plan, self.out)
             self.assertEqual(r.returncode, 0, r.stderr)
             rep = json.loads(r.stdout)["rebuilt"][0]
-            said = any("Poppins has no width table" in w for w in rep["warnings"])
+            said = any("Segoe UI has no width table" in w for w in rep["warnings"])
             self.assertEqual(said, unknown, rep["warnings"])
             if unknown:
                 self.assertEqual(rep["text_up"], 0)
 
-    def test_every_fitted_box_holds_its_text_on_a_4_3_deck(self):
+    def test_every_fitted_box_holds_its_text_on_smaller_slides(self):
         # the saved slide, measured as drawn (size, width, insets), in Arial
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import check_slide_fit
         with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
             pages = json.load(fh)["pages"]
-        check_slide_fit.make_deck(self.deck, False, False, len(pages), ("Georgia", "Arial"))
         with open(self.plan, "w", encoding="utf-8") as fh:
             json.dump(check_slide_fit.plan_for(pages, 1.0), fh)
-        r = run(BEAUTIFY, self.deck, self.plan, self.out)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        res = check_slide_fit.check(self.out, layoutfit.Measure())
-        self.assertGreater(res["boxes"], 100)
-        self.assertEqual(res["taller"], 0, res["where"])
+        # 4:3, 10 x 5.625 (On-screen Show 16:9, Google Slides' default) and A4
+        for size in (False, "screen", "a4"):
+            check_slide_fit.make_deck(self.deck, size, False, len(pages), ("Georgia", "Arial"))
+            r = run(BEAUTIFY, self.deck, self.plan, self.out)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            res = check_slide_fit.check(self.out, layoutfit.Measure())
+            self.assertGreater(res["boxes"], 100)
+            self.assertEqual(res["taller"], 0, (size, res["where"]))
 
     def test_fit_first_experiment_only_ever_gains(self):
         # --fit-first (off by default): no text ends smaller than the default run, every fitted box holds its text

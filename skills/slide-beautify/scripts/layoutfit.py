@@ -103,9 +103,9 @@ class Measure:
 class SlideMeasure(Measure):
     """Widths as a deck of another shape will draw them, in the page's inches:
     each text measured at the size the slide carries (`slide_pt`, the writer's
-    own rounding and floor) over the width scale `sx`, times `margin` for what
-    one model leaves out (insets and indents scale with the fonts, paragraph
-    spacing does not shrink under a low title)."""
+    own rounding and floor) over the width scale `sx`, widths and lines times
+    `margin` for what one model leaves out (insets and indents scale with the
+    fonts, sizes round up to half points)."""
 
     def __init__(self, base, slide_pt, sx, margin=1.0, line_floor=0):
         self.index, self.n, self.fonts = base.index, base.n, base.fonts
@@ -119,7 +119,8 @@ class SlideMeasure(Measure):
         return self.base.width(text, font, self.slide_pt(size), bold) / self.sx * self.margin
 
     def line_height(self, font):
-        return max(self.base.line_height(font), self.line_floor)
+        # the margin covers heights too: Place.pt rounds a size up by as much as a quarter point
+        return max(self.base.line_height(font), self.line_floor) * self.margin
 
 
 class _O:

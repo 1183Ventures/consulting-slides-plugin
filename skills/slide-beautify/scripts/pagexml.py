@@ -161,6 +161,10 @@ class Place:
     def pt(self, size):
         return max(7.0, round(size * min(self.s, self.sy * self.k) * 2) / 2)
 
+    def spacing(self, points):
+        """Paragraph spacing on the slide: scaled as the text is (no rounding, no floor)."""
+        return points * min(self.s, self.sy * self.k)
+
     def box(self, x, y, w, h, geom=None):
         """x, y, width, height in EMU; round shapes keep their proportions."""
         X, Y, W, H = self.x(x), self.y(y), self.dx(w), self.dh(h)
@@ -214,8 +218,10 @@ def para_xml(p, place, size_override=None):
     inner = []
     if p.get("spacing"):
         inner.append('<a:lnSpc><a:spcPct val="%d"/></a:lnSpc>' % round(p["spacing"] * 1000))
-    inner.append('<a:spcBef><a:spcPts val="%d"/></a:spcBef>' % round((p.get("before") or 0) * 100))
-    inner.append('<a:spcAft><a:spcPts val="%d"/></a:spcAft>' % round((p.get("after") or 0) * 100))
+    # space before and after scales with the text, as box heights do (Reviewer, 14 Nov 2026:
+    # unscaled spacing left fitted boxes short on slides under 7.5 in tall)
+    inner.append('<a:spcBef><a:spcPts val="%d"/></a:spcBef>' % round(place.spacing(p.get("before") or 0) * 100))
+    inner.append('<a:spcAft><a:spcPts val="%d"/></a:spcAft>' % round(place.spacing(p.get("after") or 0) * 100))
     if p.get("bullet"):
         ch = "•" if p["bullet"] is True else p["bullet"]
         if p.get("bulletColor"):

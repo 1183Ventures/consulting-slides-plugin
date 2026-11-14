@@ -9,9 +9,12 @@ shape written with Resize Shape to Fit Text (the boxes the pass fitted), the
 text is measured at the size, box width, insets, indents and spacing written
 into the slide, in the deck's theme face, with the skill's width tables, and
 its height is set against the box's. A face the tables lack is reported, not
-measured. --run builds four decks (16:9 and 4:3, each also with a title that
-ends low), fills every catalogue page with its own sample words at half,
-full and 1.8 times their length, and runs beautify_deck.py on each.
+measured, and lines take at least 1.2 of the size, as PowerPoint drew them.
+--run builds seven deck shapes (16:9, 4:3 and 10 x 5.625, each also with a
+title that ends low, and A4) in five themes (Calibri, Georgia and Arial,
+Century Gothic, Poppins, and PowerPoint's default Aptos Display with Aptos),
+fills every catalogue page with its own sample words at half, full and 1.8
+times their length, and runs beautify_deck.py on each: 105 decks.
 """
 
 import json
@@ -79,7 +82,8 @@ def need_and_lines(sp, faces, m):
         width = max((w - ins[0] - ins[2] - mar) * 72, 4)
         n = 1 if nowrap else layoutfit._wrap(text, width, face, size, bold, _M(m))
         lines += n
-        pts += n * size * m.line_height(face) * spacing + before + after
+        # PowerPoint drew Arial and Georgia at exactly 1.2 of the size on Windows (Reviewer, 14 Nov 2026)
+        pts += n * size * max(1.2, m.line_height(face)) * spacing + before + after
     return pts / 72 + ins[1] + ins[3], lines, missing
 
 
@@ -118,12 +122,17 @@ def set_theme_faces(prs, heading, body):
     part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+SIZES = {True: (13.333, 7.5), False: (10, 7.5), "screen": (10, 5.625), "a4": (10.833, 7.5)}
+
+
 def make_deck(path, wide, low_title, n, faces=None):
+    """wide: True 13.333 x 7.5, False 10 x 7.5 (4:3), "screen" 10 x 5.625
+    (PowerPoint's On-screen Show 16:9, Google Slides' default), "a4" 10.833 x 7.5."""
     prs = Presentation()
     if faces:
         set_theme_faces(prs, *faces)
-    if wide:
-        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    w, h = SIZES[wide]
+    prs.slide_width, prs.slide_height = Inches(w), Inches(h)
     lay = prs.slide_layouts[5]
     if low_title:
         for ph in lay.placeholders:
@@ -171,8 +180,10 @@ def main():
         with open(os.path.join(SCRIPTS, "..", "assets", "pages.json"), encoding="utf-8") as fh:
             pages = json.load(fh)["pages"]
         paths = []
-        shapes = (("16x9", True, False), ("4x3", False, False), ("16x9-low-title", True, True), ("4x3-low-title", False, True))
-        themes = (("calibri", None), ("arial", ("Georgia", "Arial")), ("gothic", ("Century Gothic", "Century Gothic")))
+        shapes = (("16x9", True, False), ("4x3", False, False), ("16x9-low-title", True, True), ("4x3-low-title", False, True),
+                  ("10x5.625", "screen", False), ("10x5.625-low-title", "screen", True), ("a4", "a4", False))
+        themes = (("calibri", None), ("arial", ("Georgia", "Arial")), ("gothic", ("Century Gothic", "Century Gothic")),
+                  ("poppins", ("Poppins", "Poppins")), ("office", ("Aptos Display", "Aptos")))
         for (sname, wide, low), (tname, faces) in [(a, b) for b in themes for a in shapes]:
             name = "%s-%s" % (tname, sname)
             deck = os.path.join(work, name + ".pptx")

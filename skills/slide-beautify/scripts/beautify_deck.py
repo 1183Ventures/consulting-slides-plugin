@@ -63,8 +63,9 @@ CHAR_W = 0.52   # average character width, in ems, for the fit estimate
 LINE_H = 1.2
 SLIDE_MARGIN = 1.03   # width room for decks not at the library's scale (Reviewer, 13 Nov 2026)
 # a theme face without a width table: the widest common face measured is 15%
-# wider than Arial (Poppins), and some set lines up to 1.35 of the size
-UNKNOWN_FACE = {"width": 1.15, "line": 1.35}
+# wider than Arial, and lines are set up to 1.5 of the size (Poppins by its own
+# file; Poppins has a table of its own, at its Windows figure of 1.76)
+UNKNOWN_FACE = {"width": 1.15, "line": 1.5}
 
 
 class PlanError(Exception):
