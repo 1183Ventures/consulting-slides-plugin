@@ -513,11 +513,17 @@ class LayoutFitParity(unittest.TestCase):
         W, H = int(13.333 * E), int(7.5 * E)
         # under a box ending where the library's does, a page drawn to start at 1.3 in keeps its scale
         self.assertEqual(pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.01 * E)).k, 1.0)
-        # every page of a deck starts by the box: a two-line title inside the box changes nothing
-        self.assertEqual(pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.41 * E)).k, 1.0)
+        # every standard page (from 1.62 in) starts by the box: a two-line title inside it changes nothing
+        self.assertEqual(pagexml.Place(W, H, 1.62, int(1.46 * E), int(1.41 * E)).k, 1.0)
+        # a page drawn above the box line moves only as far as a two-line title's text needs
+        two = pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.41 * E))
+        self.assertAlmostEqual(two.dy / E, 1.41 + 0.12 - 1.3, places=3)
         # a title's text running past its box moves the page under the text, 0.12 in clear
         past = pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.70 * E))
         self.assertAlmostEqual(past.dy / E, 1.70 + 0.12 - 1.3, places=3)
+        # a page drawn to start above the box line still clears text anchored low in a tall box
+        lowtext = pagexml.Place(W, H, 1.3, int(2.3 * E), int(2.3 * E))
+        self.assertAlmostEqual(lowtext.dy / E, 2.3 + 0.12 - 1.3, places=3)
         # a page starting at 1.62 in under a lower box keeps 0.12 in clear of the box
         low = pagexml.Place(W, H, 1.62, int(1.7 * E))
         self.assertAlmostEqual(low.dy / E, 1.7 + 0.12 - 1.62, places=3)

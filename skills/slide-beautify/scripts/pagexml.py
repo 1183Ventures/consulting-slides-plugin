@@ -139,8 +139,14 @@ class Place:
             # title's text runs past the box, and then clears the text by 0.12 in.
             clear = min(0.12, content_top - LIB_TITLE_BOTTOM)
             want = title_bottom_emu + clear * EMU * self.sy
-            if title_text_bottom_emu is not None and title_text_bottom_emu > title_bottom_emu:
-                want = max(want, title_text_bottom_emu + 0.12 * EMU * self.sy)
+            gap = 0.12 * EMU * self.sy
+            if title_text_bottom_emu is not None:
+                if title_text_bottom_emu > title_bottom_emu:
+                    want = max(want, title_text_bottom_emu + gap)
+                elif clear < 0.12:
+                    # the page's own (smaller) clearance holds only as far as the title's text
+                    # allows: text anchored low in a tall box still gets 0.12 in
+                    want = max(want, min(title_text_bottom_emu + gap, title_bottom_emu + gap))
             have = content_top * EMU * self.sy
             self.want = want
             if want > have:
