@@ -422,6 +422,17 @@ class LayoutFitParity(unittest.TestCase):
         self.assertIsNotNone(first_difference({"a": None}, {}))
         self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))
 
+    def test_the_row_rules_match_the_js(self):
+        # the 12 pages the Reviewer's row findings change (column hold, table hold, near misses, kinds)
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors-layoutfit-rows.json"), encoding="utf-8") as fh:
+            rows = json.load(fh)["vectors"]
+        self.assertEqual(len(rows), 12)
+        for v in rows:
+            shapes, r = self.run_page(v, page_id=v["id"])
+            with self.subTest(page=v["id"]):
+                self.assertIsNone(first_difference(rounded(shapes), v["expect"]))
+                self.assertEqual(r["size"], v["size"])
+
     def test_caps_hold(self):
         capped = [v for v in self.vectors if v["id"] in layoutfit.CAPS]
         self.assertGreaterEqual(len(capped), 7)

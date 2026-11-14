@@ -374,6 +374,33 @@ def _ink_spans(s, o):
     return out
 
 
+def sideways_depths(shapes, o):
+    """Each one-line paragraph within its gap of a filled shape beside it,
+    keyed (text, paragraph, shape), with how far it reaches into that gap."""
+    solids = [(f, k) for k, f in enumerate(shapes) if f.get("kind") == "sp" and js_truthy(f.get("fill"))
+              and not js_truthy(f.get("rot")) and not is_text_box(f)]
+    out = {}
+    for i, s in enumerate(shapes):
+        if not is_text_box(s):
+            continue
+        top = text_top(s, o)
+        bot = top + text_height(s, o, True)
+        spans = _ink_spans(s, o)
+        for f, k in solids:
+            if inside(s, f) or f["y"] >= bot - 0.02 or bottom(f) <= top + 0.02:
+                continue
+            for j, (left, rgt) in enumerate(spans):
+                gap = max(SIDE_GAP, 0.03 * (rgt - left))
+                depth = None
+                if f["x"] >= left and rgt > f["x"] - gap:
+                    depth = rgt - (f["x"] - gap)
+                elif right(f) <= rgt and left < right(f) + gap:
+                    depth = right(f) + gap - left
+                if depth is not None:
+                    out[(i, j, k)] = depth
+    return out
+
+
 def sideways_hits(shapes, o):
     """One-line paragraphs whose ink comes within SIDE_GAP (3% of a long
     line's width) of a filled shape beside them."""
@@ -688,11 +715,23 @@ def _raisable(s):
     return is_text_box(s) and s["w"] >= NARROW
 
 
-def _held_rows(shapes):
+def _lead(s):
+    paras = (s.get("text") or {}).get("paras") or []
+    runs = (paras[0].get("runs") or []) if paras else []
+    return runs[0] if runs else None
+
+
+def _color_key(c):
+    return "" if not js_truthy(c) else c if isinstance(c, str) else "[object Object]" if isinstance(c, dict) else js_str(c)
+
+
+def _held_rows(shapes, seed=frozenset()):
     """One row, one size: texts drawn side by side at one size, weight and
     colour end at one size. Where the raise must skip one of them (a narrow
-    label, text in a coloured shape), the others are held too.
-    -> (indices of the shapes to hold, the held rows' sizes)"""
+    label, text in a coloured shape), or one must stay (a seed: it would get
+    closer to a shape beside it), the others are held too; a seed keeps its
+    whole kind; a text on a grouped table keeps the table's size; and the hold
+    runs down a column. -> (indices of the shapes to hold, the held sizes)"""
     items = []
 
     def walk(lst, top):
@@ -705,27 +744,85 @@ def _held_rows(shapes):
     walk(shapes, True)
     rows = {}
     for s, i in items:
-        paras = _paras(s)
-        runs = (paras[0].get("runs") or []) if paras else []
-        if not runs or not has_text(s):
+        r = _lead(s)
+        if not r or not has_text(s):
             continue
-        r = runs[0]
         sz = r.get("sz") or 12
         if sz < FILL_FROM or sz > FILL_TO:
             continue
         # a shape without a place (a placeholder) is NaN in JS: they share one key
         y = s.get("y")
-        c = r.get("color")
-        c = "" if not js_truthy(c) else c if isinstance(c, str) else "[object Object]" if isinstance(c, dict) else js_str(c)
-        k = ("NaN" if not isinstance(y, (int, float)) else round_half_up(y * 50), sz, js_truthy(r.get("b")), c)
+        k = ("NaN" if not isinstance(y, (int, float)) else round_half_up(y * 50), sz, js_truthy(r.get("b")), _color_key(r.get("color")))
         rows.setdefault(k, []).append((s, i))
     held, sizes = set(), []
     for k, row in rows.items():
         up = [i for s, i in row if i >= 0 and _raisable(s)]
-        if not up or len(up) == len(row):
+        if not up or (len(up) == len(row) and not any(i in seed for i in up)):
             continue
         held.update(up)
         sizes.append(k[1])
+
+    def kind_of(s):
+        r = _lead(s)
+        return (r.get("sz") or 12, js_truthy(r.get("b")), _color_key(r.get("color"))) if r else None
+
+    seed_kinds = {kind_of(shapes[i]) for i in seed} - {None}
+    for s, i in items:
+        if i < 0 or not _raisable(s) or kind_of(s) not in seed_kinds:
+            continue
+        held.add(i)
+        if kind_of(s)[0] not in sizes:
+            sizes.append(kind_of(s)[0])
+    held.update(seed)
+    # a text on a table drawn as a group is held with the table
+    plain = [(s, i) for s, i in items if i >= 0 and _raisable(s) and _lead(s)]
+    tables = []
+    for g in shapes:
+        if not js_truthy(g.get("children")):
+            continue
+        cells = []
+
+        def walk2(lst):
+            for c in lst:
+                if js_truthy(c.get("children")):
+                    walk2(c["children"])
+                else:
+                    cells.append(c)
+
+        walk2(g["children"])
+        bx = [c for c in cells if c.get("kind") == "sp"]
+        if not bx:
+            continue
+        tables.append({"x0": min(c["x"] for c in bx), "y0": min(c["y"] for c in bx),
+                       "x1": max(c["x"] + c["w"] for c in bx), "y1": max(c["y"] + c["h"] for c in bx),
+                       "sizes": {((_lead(c) or {}).get("sz") or 12) for c in bx if has_text(c)}})
+    for s, i in plain:
+        sz = _lead(s).get("sz") or 12
+        if sz < FILL_FROM or sz > FILL_TO or i in held:
+            continue
+        cx = s["x"] + min(s["w"], 0.6) / 2
+        cy = s["y"] + s["h"] / 2
+        if any(sz in g["sizes"] and g["x0"] < cx < g["x1"] and g["y0"] < cy < g["y1"] for g in tables):
+            held.add(i)
+            if sz not in sizes:
+                sizes.append(sz)
+    # the hold runs down a column: same size and colour, a shared left edge or centre
+    grew = True
+    while grew:
+        grew = False
+        for s, i in plain:
+            if i in held:
+                continue
+            rt = _lead(s)
+            sz = rt.get("sz") or 12
+            if sz < FILL_FROM or sz > FILL_TO:
+                continue
+            for h, j in plain:
+                if j in held and (_lead(h).get("sz") or 12) == sz and _color_key(_lead(h).get("color")) == _color_key(rt.get("color")) \
+                        and (abs(h["x"] - s["x"]) < TOL or abs(h["x"] + h["w"] / 2 - s["x"] - s["w"] / 2) < TOL):
+                    held.add(i)
+                    grew = True
+                    break
     return held, sizes
 
 
@@ -774,11 +871,12 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
         return {"changed": ch, "size": 0}
     if not o.body:
         return {"changed": changed, "size": 0}
-    held, held_sizes = _held_rows(base)
-    sizes = [r.get("sz") or 12 for i, s in enumerate(shapes) if is_text_box(s) and i not in held
-             for p in _paras(s) for r in p.get("runs") or []]
-    sizes = [z for z in sizes if FILL_FROM <= z <= FILL_TO]
-    if not sizes:
+    def sizes_of(held):
+        zs = [r.get("sz") or 12 for i, s in enumerate(shapes) if is_text_box(s) and i not in held
+              for p in _paras(s) for r in p.get("runs") or []]
+        return [z for z in zs if FILL_FROM <= z <= FILL_TO]
+
+    if not sizes_of(_held_rows(base)[0]):
         return {"changed": changed, "size": 0}
     # body text stays half a point under the smallest text the fill leaves alone
     kept = [z for z in _run_sizes(shapes) if FILL_TO < z < 20]
@@ -807,32 +905,49 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
         return max(tops) - min(tops)
 
     columns = [(idx, span_of(base, idx)) for idx in col_idx.values() if len(idx) >= 3]
-    base_sideways = sideways_hits(base, o)
-    cap = o.max_raise if o.max_raise is not None else INF
-    # text drawn smaller than a held row grows at most to that row's size
-    for h in held_sizes:
-        for t in sizes:
-            if t < h:
-                cap = min(cap, h - t)
+    base_sideways = sideways_depths(base, o)
     best = None
-    d = 0.5
-    while max(sizes) + d <= ceiling + 1e-9 and d <= cap + 1e-9:
-        trial = copy.deepcopy(base)
-        _raise(trial, d, held)
-        if any(base_lines[i] is not None and lines_of(s, o) > base_lines[i] for i, s in enumerate(trial)):
+    # a text that would get closer to a shape beside it stays at its size, with
+    # its kind (a seed), and the fill runs again: the rest of the page still fills
+    seed = set()
+    for _round in range(6):
+        held, held_sizes = _held_rows(base, seed)
+        sizes = sizes_of(held)
+        if not sizes:
             break
-        ch = []
-        _arrange(trial, o, ch, not fixed)
-        if not _fits(trial, o):
+        best = None
+        closer = None
+        cap = o.max_raise if o.max_raise is not None else INF
+        # text drawn smaller than a held row grows at most to that row's size
+        for h in held_sizes:
+            for t in sizes:
+                if t < h:
+                    cap = min(cap, h - t)
+        d = 0.5
+        while max(sizes) + d <= ceiling + 1e-9 and d <= cap + 1e-9:
+            trial = copy.deepcopy(base)
+            _raise(trial, d, held)
+            if any(base_lines[i] is not None and lines_of(x, o) > base_lines[i] for i, x in enumerate(trial)):
+                break
+            ch = []
+            _arrange(trial, o, ch, not fixed)
+            if not _fits(trial, o):
+                break
+            if any(span_of(trial, idx) < span - 0.05 for idx, span in columns):
+                break
+            # nor may a line grow into a shape beside it, nor a near miss get closer
+            side = sideways_depths(trial, o)
+            nearer = [k[0] for k, dep in side.items() if k not in base_sideways or dep > base_sideways[k] + 0.005]
+            if nearer:
+                closer = nearer
+                break
+            if any(abs(text_top(trial[i], o) - text_top(trial[j], o)) > 0.05 for i, j in aligned):
+                break
+            best = (trial, d, ch)
+            d += 0.5
+        if not closer or all(i in seed for i in closer):
             break
-        if any(span_of(trial, idx) < span - 0.05 for idx, span in columns):
-            break
-        if sideways_hits(trial, o) > base_sideways:
-            break
-        if any(abs(text_top(trial[i], o) - text_top(trial[j], o)) > 0.05 for i, j in aligned):
-            break
-        best = (trial, d, ch)
-        d += 0.5
+        seed.update(closer)
     if not best:
         return {"changed": changed, "size": 0}
     shapes[:] = best[0]
