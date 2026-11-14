@@ -50,6 +50,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pagexml  # noqa: E402
+import layoutfit  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PAGES = os.path.join(HERE, "..", "assets", "pages.json")
@@ -177,7 +178,44 @@ def new_shape_id(slide):
     return max(ids + [1]) + 1
 
 
-def build_slide(prs, layout, entry, page, report):
+def deck_fonts(prs):
+    """The theme's heading and body faces, where the width tables know them
+    (else the library's Georgia and Arial, which the pass measures with)."""
+    fonts = dict(layoutfit.DEFAULT_FONTS)
+    try:
+        part = prs.slide_master.part.part_related_by(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
+        root = etree.fromstring(part.blob)
+        ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+        known = layoutfit.Measure().fonts
+        for key, tag in (("heading", "majorFont"), ("body", "minorFont")):
+            face = root.xpath(".//a:fontScheme/a:%s/a:latin/@typeface" % tag, namespaces=ns)
+            if face and face[0] in known:
+                fonts[key] = face[0]
+    except (KeyError, ValueError, etree.XMLSyntaxError):
+        pass
+    return fonts
+
+
+def lay_out(shapes, page, place, fonts, report):
+    """layoutfit.py on the filled page, in the page's own inches: text boxes
+    fitted to their text, rows and cards spread to the body's bottom, body
+    text raised while the page has room (the library's own pass)."""
+    scale = min(place.s, place.sy * place.k)
+    measure = layoutfit.Measure()
+    if abs(scale / place.sx - 1) > 0.01:
+        measure = layoutfit.ScaledMeasure(measure, scale / place.sx)
+    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"])
+    fitted = sum(1 for c in r["changed"] if c["what"] == "height to its text")
+    report["layout"] = (["%d text boxes fitted to their text" % fitted] if fitted else []) + \
+        [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
+    report["text_up"] = r["size"]
+    if not layoutfit.page_fits(shapes, fonts=fonts, measure=measure):
+        report["warnings"].append("Texts on this page may run into each other or past the bottom: shorten the longest")
+    return r
+
+
+def build_slide(prs, layout, entry, page, report, fit=True):
     slide = prs.slides.add_slide(layout)
     title_ph = None
     for ph in list(slide.placeholders):
@@ -231,10 +269,29 @@ def build_slide(prs, layout, entry, page, report):
         sizes[key] = min(sizes.get(key, place.pt(orig)), size)
         drafts.append((i, s, slot, (key, ok)))
 
-    # second pass: one size per role on the page, then draw
+    # one size per role on the page, written into the page in its own points
+    scale = min(place.s, place.sy * place.k)
+    shapes, slots_of = [], []
+    for i, s, slot, fitted in drafts:
+        s = copy.deepcopy(s)
+        if fitted is not None:
+            key, ok = fitted
+            size = sizes[key]
+            if size < place.pt(key[1]):
+                report["shrunk"].append("%s %g pt to %g pt" % (slot["id"], place.pt(key[1]), size))
+                for p in (s.get("text") or {}).get("paras", []):
+                    for r in p.get("runs", []):
+                        r["sz"] = size / scale
+        shapes.append(s)
+        slots_of.append(slot)
+    # then the library's layout pass: boxes fitted, the page spread and filled
+    if fit:
+        lay_out(shapes, page, place, deck_fonts(prs), report)
+
+    # draw
     tree = slide.shapes._spTree
     sid_next = new_shape_id(slide)
-    for i, s, slot, fit in drafts:
+    for s, slot in zip(shapes, slots_of):
         if s["kind"] == "ph":
             if s.get("type") == "source" and entry.get("source"):
                 src = fill_text(s, entry["source"])
@@ -245,18 +302,15 @@ def build_slide(prs, layout, entry, page, report):
         if s["kind"] == "cxn":
             tree.append(etree.fromstring(pagexml.cxn_xml(s, sid_next, place)))
         elif s["kind"] == "sp":
-            override = None
-            if fit is not None:
-                key, ok = fit
-                size = sizes[key]
-                if size < place.pt(key[1]):
-                    override = size
-                    report["shrunk"].append("%s %g pt to %g pt" % (slot["id"], place.pt(key[1]), size))
-                need, have = needed_height(s, size, place)
+            # text in a coloured shape keeps its box: check it still holds its text
+            if slot is not None and not (fit and layoutfit.is_text_box(s)):
+                size = next((r.get("sz") for p in (s.get("text") or {}).get("paras", [])
+                             for r in p.get("runs", []) if r.get("sz")), 12)
+                need, have = needed_height(s, place.pt(size), place)
                 if need > have * 1.05:
                     report["warnings"].append("%s may still overflow its box: shorten it" % slot["id"])
             name = "Beautify %s %s" % (page["id"], slot["id"]) if slot else None
-            tree.append(etree.fromstring(pagexml.sp_xml(s, sid_next, place, name=name, size_override=override)))
+            tree.append(etree.fromstring(pagexml.sp_xml(s, sid_next, place, name=name)))
         else:
             continue
         sid_next += 1
@@ -285,6 +339,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--report")
     ap.add_argument("--keep-originals", action="store_true")
+    ap.add_argument("--no-fit", action="store_true", help="draw the pages as the library drew them, without the layout pass")
     ap.add_argument("--pages", default=DEFAULT_PAGES, help="the page catalogue (default: the skill's sample)")
     a = ap.parse_args()
     if os.path.abspath(a.deck) == os.path.abspath(a.out):
@@ -315,9 +370,9 @@ def main():
     # slide may be dropped until all are made
     for e in entries:
         rep = {"slide": e["slide"], "page": e["page"], "filled": [], "kept": [], "cleared": [],
-               "shrunk": [], "warnings": [], "source": None}
+               "shrunk": [], "layout": [], "text_up": 0, "warnings": [], "source": None}
         orig = originals[e["slide"] - 1]
-        new = build_slide(prs, layout, e, pages[e["page"]], rep)
+        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit)
         rep["notes"] = "kept" if copy_notes(orig, new) else None
         built.append((orig, sld_ids[-1], rep))
         reports.append(rep)

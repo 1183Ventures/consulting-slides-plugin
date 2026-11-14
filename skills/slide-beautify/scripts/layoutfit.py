@@ -1,54 +1,87 @@
-"""Text boxes sized to their text, and cards and rows drawn tight and even.
+"""Text boxes sized to their text, and pages that read full and even.
 
-A port of SlideShortcuts' templates/layoutfit.js, run on a library page once
-the deck's words are in it, so the rebuilt page is fitted and evenly spaced
-the way our own library pages are:
+A port of SlideShortcuts' src/templates/layoutfit.js (lavender main 70839fd8),
+run on a library page once the deck's words are in it, so the rebuilt page is
+fitted and spaced the way our own library pages are. The rule is "fit, then
+fill":
 
 1. FIT. Every plain text box (no fill, no line, upright, a rectangle) takes
-   the height its text needs, with Resize Shape to Fit Text left on. The edge
-   its text is anchored to stays, so the text does not move.
-2. STACK. In a column of boxes, one that now runs into the box under it
-   pushes it down (and what is under that), keeping the page's gap.
-3. CARDS. A filled card with no text of its own ends one margin under the
-   last thing in it; cards side by side keep one height; a card in a grid
-   keeps its size.
-4. DISTRIBUTE. Three or more like boxes, one per row, get equal gaps between
-   their texts (the first and last stay); each row's label, rule and number
-   move with it.
+   the height its text needs at its size, with Resize Shape to Fit Text on.
+   The edge its text is anchored to stays, so the text does not move.
+2. (No stacking: fitting never moves a text, so a box is never pushed.)
+3. ARRANGE, so the content uses the body (from under the title to above the
+   source line):
+   - a row of cards that ends the page reaches the body's bottom; text stays
+     at the top, and what sat at a card's foot stays pinned to its bottom;
+     cards in a grid keep their size;
+   - three or more like boxes, one per row, that end the page are spread
+     down with equal gaps between their texts (never closer than drawn); each
+     row's label, rule and number move with it.
+4. FILL. While the page has room, its body text (9 to 13.5 pt) steps up half
+   a point at a time (never above MAX_FILL) and steps 1 to 3 run again. The
+   largest size at which everything still fits is kept: no text past the
+   body's bottom, out of its card, onto a rule, into a filled shape or into
+   another text; no label outside a column of rows gains a line; lined-up rows
+   stay lined up; no column of rows gets closer; no line runs sideways into a
+   shape beside it; body text stays half a point under the smallest text the
+   fill leaves alone; and a page's measured cap (layoutfit-caps.json) holds.
+
+Never touched: placeholders, turned shapes, text in a coloured shape, titles
+and big figures (above 13.5 pt), a page with fewer than two text boxes. A page
+with a table, group or picture is fitted only (nothing is spread).
 
 Shapes are the page's descriptions, in inches (pagexml.py). Text is measured
-with fixed width tables (assets/font-widths.json, the same tables the
-library's own tests use), so this and the library agree. Standard library only.
+with fixed width tables (assets/font-widths.json, the tables the library's
+own tests use), so this and the library agree; tools/test_beautify.py holds
+it to the JS on recorded pages (tools/vectors-layoutfit.json). Standard
+library only.
 """
 
+import copy
 import json
-import math
 import os
 import re
+from decimal import Decimal, ROUND_HALF_UP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOL = 0.02
-MIN_SLACK = 0.12
-BIG_GAP = 0.45
+ASSETS = os.path.join(HERE, "..", "assets")
+
+TOL = 0.02          # inches: edges this close are the same edge
+MIN_SLACK = 0.12    # inches: a box this much off its text is fitted
 CARD_GEOMS = ("rect", "roundRect")
-SAFETY = 1.06
-SAFETY_ADD = 0.04
-MIN_LINE = 1.2
-NEAR = 0.35
-FOOT = 0.35
+NEAR = 0.35         # inches: cards this close form a grid
+FOOT = 0.35         # inches: a shape this close to a card's bottom is its foot
 MAX_FILL = 14
 FILL_FROM = 9
 FILL_TO = 13.5
-MAX_GAP = 0.9
-NARROW = 1.2
+MAX_GAP = 0.9       # inches: rows are never spread further apart than this
+NARROW = 1.2        # inches: a text box narrower than this is never shortened
+SAFETY = 1.06
+SAFETY_ADD = 0.04
+MIN_LINE = 1.2
+SIDE_GAP = 0.08
 BODY = {"top": 1.62, "bottom": 6.58}
 DEFAULT_INSET = [0.08, 0.05, 0.08, 0.05]
+DEFAULT_FONTS = {"heading": "Georgia", "body": "Arial"}
+INF = float("inf")
+
+
+def _load_caps():
+    try:
+        with open(os.path.join(ASSETS, "layoutfit-caps.json"), encoding="utf-8") as fh:
+            return dict(json.load(fh).get("caps") or {})
+    except (OSError, ValueError):
+        return {}
+
+
+# The fill's caps the renderer measured (lavender tools/library-overflow.mjs), by page id
+CAPS = _load_caps()
 
 
 class Measure:
     """Widths from the fixed tables; a face not in them is measured as Arial."""
 
-    def __init__(self, path=os.path.join(HERE, "..", "assets", "font-widths.json")):
+    def __init__(self, path=os.path.join(ASSETS, "font-widths.json")):
         with open(path, encoding="utf-8") as fh:
             t = json.load(fh)
         self.index = {ch: i for i, ch in enumerate(t["chars"])}
@@ -64,8 +97,42 @@ class Measure:
         return sum(w[self.index.get(ch, self.n)] for ch in str(text)) / 1000.0 * size
 
     def line_height(self, font):
-        return self.face(font).get("lineHeight", 1.2)
+        return self.face(font).get("lineHeight") or 1.2
 
+
+class ScaledMeasure(Measure):
+    """Widths times `factor`: text on a deck whose fonts scale more than its
+    width (a 4:3 slide) wraps as if wider, so the pass sees the deck's breaks."""
+
+    def __init__(self, base, factor):
+        self.index, self.n, self.fonts = base.index, base.n, base.fonts
+        self.factor = factor
+
+    def width(self, text, font, size, bold):
+        return Measure.width(self, text, font, size, bold) * self.factor
+
+
+class _O:
+    """The pass's options: measure, fonts, body box, cap."""
+
+    def __init__(self, measure, fonts, body, max_raise):
+        self.m = measure
+        self.fonts = fonts
+        self.body = body
+        self.max_raise = max_raise
+
+
+def to_fixed(x, digits):
+    """JS Number.prototype.toFixed: halves round away from zero, on the exact value."""
+    q = Decimal(1).scaleb(-digits)
+    return str(Decimal(x).quantize(q, rounding=ROUND_HALF_UP))
+
+
+def _num(x, digits):
+    return float(to_fixed(x, digits))
+
+
+# ---- shapes -----------------------------------------------------------------
 
 def bottom(s):
     return s["y"] + s["h"]
@@ -75,14 +142,18 @@ def right(s):
     return s["x"] + s["w"]
 
 
+def _paras(s):
+    return (s.get("text") or {}).get("paras") or []
+
+
 def has_text(s):
-    t = s.get("text") or {}
-    return any(str(r.get("t") or "").strip() for p in t.get("paras") or [] for r in p.get("runs") or [])
+    return any(r.get("t") and str(r.get("t")).strip() for p in _paras(s) for r in p.get("runs") or [])
 
 
 def is_text_box(s):
+    t = s.get("text") or {}
     return (s.get("kind") == "sp" and (s.get("geom") or "rect") == "rect" and not s.get("rot")
-            and not s.get("fill") and not s.get("line") and has_text(s) and not (s.get("text") or {}).get("vert"))
+            and not s.get("fill") and not s.get("line") and has_text(s) and not t.get("vert"))
 
 
 def is_card(s):
@@ -99,50 +170,127 @@ def overlap_x(a, b):
     return min(right(a), right(b)) - max(a["x"], b["x"])
 
 
-def cxn_span_y(s):
-    return min(s["y1"], s["y2"]), max(s["y1"], s["y2"])
+def span_y(s):
+    if s.get("kind") == "cxn":
+        return [min(s["y1"], s["y2"]), max(s["y1"], s["y2"])]
+    return [s["y"], bottom(s)]
 
 
-def text_height(s, m, fonts, raw=False):
-    """Inches the text of `s` needs at its sizes, with its insets."""
+def span_x(s):
+    if s.get("kind") == "cxn":
+        return [min(s["x1"], s["x2"]), max(s["x1"], s["x2"])]
+    return [s["x"], right(s)]
+
+
+def _shift(s, d):
+    if s.get("kind") == "cxn":
+        s["y1"] += d
+        s["y2"] += d
+    else:
+        s["y"] += d
+
+
+def _has(items, s):
+    return any(x is s for x in items)
+
+
+def _index(items, s):
+    for i, x in enumerate(items):
+        if x is s:
+            return i
+    return -1
+
+
+# ---- text -------------------------------------------------------------------
+
+def _runs(p):
+    return [r for r in p.get("runs") or [] if r.get("t") is not None]
+
+
+def _size(runs):
+    for r in runs:
+        if r.get("sz"):
+            return r["sz"]
+    return 12
+
+
+def _font(runs, o):
+    return o.fonts["heading"] if any(r.get("font") == "head" for r in runs) else o.fonts["body"]
+
+
+def _bold(runs):
+    return len(runs) > 0 and all(r.get("b") for r in runs)
+
+
+def _indent(p):
+    return (p.get("level") or 0) * 0.2 + (0.17 if p.get("bullet") else 0)
+
+
+_BREAK = re.compile(r"\r?\n|\v")
+_WORDS = re.compile(r"(\s+)")
+_SPACE = re.compile(r"^\s+$")
+
+
+def _wrap(text, width, font, size, bold, o):
+    """Lines a paragraph's text wraps to: greedy, at spaces, as PowerPoint does."""
+    lines = 0
+    for para in _BREAK.split(text):
+        line = 0
+        lines += 1
+        for word in _WORDS.split(para):
+            if not word:
+                continue
+            w = o.m.width(word, font, size, bold)
+            if line + w > width and line > 0 and not _SPACE.match(word):
+                lines += 1
+                line = w
+            else:
+                line += w
+    return lines
+
+
+def text_height(s, o, raw=False):
+    """The height, in inches, the text of `s` needs at its sizes, with its
+    insets; `raw`: the text alone, without the fit's safety room."""
     t = s.get("text") or {}
     ins = t.get("inset") or DEFAULT_INSET
     room = max((s["w"] - ins[0] - ins[2]) * 72, 4)
-    pts = 0.0
+    pts = 0
     for p in t.get("paras") or []:
-        runs = [r for r in p.get("runs") or [] if r.get("t") is not None]
-        size = next((r["sz"] for r in runs if r.get("sz")), 12)
-        font = fonts["heading"] if any(r.get("font") == "head" for r in runs) else fonts["body"]
-        bold = bool(runs) and all(r.get("b") for r in runs)
-        indent = ((p.get("level") or 0) * 0.2 + (0.17 if p.get("bullet") else 0)) * 72
-        width = max(room - indent, 4)
+        runs = _runs(p)
+        size = _size(runs)
+        font = _font(runs, o)
+        bold = _bold(runs)
+        width = max(room - _indent(p) * 72, 4)
         text = "".join(str(r["t"]) for r in runs)
-        lines = 0
-        if t.get("wrap") is False:
-            lines = 1
-        else:
-            for para in re.split(r"\r?\n|\v", text):
-                line = 0.0
-                lines += 1
-                for word in re.split(r"(\s+)", para):
-                    if not word:
-                        continue
-                    w = m.width(word, font, size, bold)
-                    if line + w > width and line > 0 and not word.isspace():
-                        lines += 1
-                        line = w
-                    else:
-                        line += w
-        spacing = (p.get("spacing") or 100) / 100.0
-        pts += lines * size * max(m.line_height(font), 0 if raw else MIN_LINE) * spacing
+        lines = 1 if t.get("wrap") is False else _wrap(text, width, font, size, bold, o)
+        spacing = p["spacing"] / 100 if p.get("spacing") else 1
+        pts += lines * size * max(o.m.line_height(font), 0 if raw else MIN_LINE) * spacing
         pts += (p.get("after") or 0) + (p.get("before") or 0)
     if raw:
         return pts / 72 + ins[1] + ins[3]
     return (pts / 72) * SAFETY + SAFETY_ADD + ins[1] + ins[3]
 
 
-def text_top(s, m, fonts):
-    need = text_height(s, m, fonts, True)
+def lines_of(s, o):
+    """Lines the text wraps to, all paragraphs (for the fill's guard)."""
+    t = s.get("text") or {}
+    ins = t.get("inset") or DEFAULT_INSET
+    room = max((s["w"] - ins[0] - ins[2]) * 72, 4)
+    lines = 0
+    for p in t.get("paras") or []:
+        runs = _runs(p)
+        if t.get("wrap") is False:
+            lines += 1
+            continue
+        width = max(room - _indent(p) * 72, 4)
+        lines += _wrap("".join(str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o)
+    return lines
+
+
+def text_top(s, o):
+    """Where the text starts in its box, by its anchor."""
+    need = text_height(s, o, True)
     a = (s.get("text") or {}).get("anchor") or "t"
     if a == "ctr":
         return s["y"] + (s["h"] - need) / 2
@@ -151,20 +299,79 @@ def text_top(s, m, fonts):
     return s["y"]
 
 
-def _fit_boxes(shapes, m, fonts, changed):
+def text_bottom(s, o):
+    return text_top(s, o) + text_height(s, o, True)
+
+
+def _ink_spans(s, o):
+    """One-line paragraphs' ink, [left, right] in inches."""
+    t = s.get("text") or {}
+    ins = t.get("inset") or DEFAULT_INSET
+    inner = s["w"] - ins[0] - ins[2]
+    out = []
+    for p in t.get("paras") or []:
+        runs = _runs(p)
+        if not runs:
+            continue
+        w = o.m.width("".join(str(r["t"]) for r in runs), _font(runs, o), _size(runs),
+                      all(r.get("b") for r in runs)) / 72 + _indent(p)
+        if w > inner + 0.01 and t.get("wrap") is not False:
+            continue
+        x0 = s["x"] + ins[0]
+        x1 = s["x"] + s["w"] - ins[2]
+        align = p.get("align")
+        left = x1 - w if align == "r" else (x0 + x1) / 2 - w / 2 if align == "ctr" else x0
+        out.append((left, left + w))
+    return out
+
+
+def sideways_hits(shapes, o):
+    """One-line paragraphs whose ink comes within SIDE_GAP (3% of a long
+    line's width) of a filled shape beside them."""
+    solids = [f for f in shapes if f.get("kind") == "sp" and f.get("fill") and not f.get("rot") and not is_text_box(f)]
+    n = 0
     for s in shapes:
         if not is_text_box(s):
             continue
-        need = text_height(s, m, fonts)
+        top = text_top(s, o)
+        bot = top + text_height(s, o, True)
+        spans = None
+        for f in solids:
+            if inside(s, f) or f["y"] >= bot - 0.02 or bottom(f) <= top + 0.02:
+                continue
+            if spans is None:
+                spans = _ink_spans(s, o)
+            for left, rgt in spans:
+                gap = max(SIDE_GAP, 0.03 * (rgt - left))
+                if f["x"] >= left and rgt > f["x"] - gap:
+                    n += 1
+                elif right(f) <= rgt and left < right(f) + gap:
+                    n += 1
+    return n
+
+
+def _in_row_column(s, shapes):
+    return sum(1 for b in shapes if is_text_box(b) and abs(b["x"] - s["x"]) < TOL and abs(b["w"] - s["w"]) < TOL) >= 3
+
+
+# ---- 1. fit -----------------------------------------------------------------
+
+def _fit_boxes(shapes, o, changed):
+    for s in shapes:
+        if not is_text_box(s):
+            continue
+        need = text_height(s, o)
         if abs(s["h"] - need) < MIN_SLACK and need <= s["h"]:
             continue
+        # a narrow label keeps a spare line: its line breaks are the estimate's least sure
         if s["w"] < NARROW:
-            r = next((x for x in (s["text"]["paras"][0].get("runs") or []) if x.get("sz")), {}) if s["text"].get("paras") else {}
-            need = min(max(need, s["h"]), need + (r.get("sz") or 12) * MIN_LINE / 72)
+            paras = _paras(s)
+            sz = _size(paras[0].get("runs") or []) if paras else 12
+            need = min(max(need, s["h"]), need + (sz * MIN_LINE) / 72)
         if abs(s["h"] - need) < MIN_SLACK and need <= s["h"]:
             continue
         a = s["text"].get("anchor") or "t"
-        frm = s["h"]
+        old = s["h"]
         if a == "ctr":
             s["y"] += (s["h"] - need) / 2
         elif a == "b":
@@ -172,32 +379,11 @@ def _fit_boxes(shapes, m, fonts, changed):
         s["h"] = need
         if s["text"].get("wrap") is not False:
             s["text"]["autofit"] = "resize"
-        changed.append({"name": s.get("name") or "text box", "what": "height to its text", "from": round(frm, 3), "to": round(need, 3)})
+        changed.append({"name": s.get("name") or "text box", "what": "height to its text",
+                        "from": _num(old, 3), "to": _num(need, 3)})
 
 
-def _stack(shapes, m, fonts, changed, orig_y, orig_top, orig_bottom):
-    boxes = sorted([s for s in shapes if is_text_box(s)], key=lambda s: s["y"])
-    for i, a in enumerate(boxes):
-        for b in boxes[i + 1:]:
-            if overlap_x(a, b) < 0.6 * min(a["w"], b["w"]):
-                continue
-            gap = orig_top[id(b)] - orig_bottom[id(a)]
-            if gap < 0:
-                break
-            at = text_top(b, m, fonts)
-            a_bottom = text_top(a, m, fonts) + text_height(a, m, fonts, True)
-            if a_bottom <= at:
-                break
-            want = a_bottom + min(gap, 0.04)
-            if at < want - TOL and orig_y[id(b)] >= orig_y[id(a)]:
-                d = want - at
-                top = b["y"]
-                for s in shapes:
-                    if s is not a and s.get("kind") == "sp" and s["y"] >= top - TOL and overlap_x(s, b) > 0:
-                        s["y"] += d
-                changed.append({"name": b.get("name") or "text box", "what": "moved down, clear of the box above", "from": 0, "to": round(d, 3)})
-            break
-
+# ---- 3. arrange -------------------------------------------------------------
 
 def _in_grid(c, cards):
     for d in cards:
@@ -209,51 +395,27 @@ def _in_grid(c, cards):
         if across and (below or above):
             return True
         down = min(bottom(c), bottom(d)) - max(c["y"], d["y"]) > 0
-        beside = (d["x"] >= right(c) - TOL and d["x"] - right(c) < NEAR) or (c["x"] >= right(d) - TOL and c["x"] - right(d) < NEAR)
+        beside = ((d["x"] >= right(c) - TOL and d["x"] - right(c) < NEAR)
+                  or (c["x"] >= right(d) - TOL and c["x"] - right(d) < NEAR))
         if down and beside and abs(d["h"] - c["h"]) > TOL:
             return True
     return False
 
 
-def _kids(c, shapes):
-    out = []
-    for s in shapes:
-        if s.get("kind") == "cxn":
-            y0, y1 = cxn_span_y(s)
-            if y0 >= c["y"] - TOL and y1 <= bottom(c) + TOL and min(s["x1"], s["x2"]) >= c["x"] - TOL and max(s["x1"], s["x2"]) <= right(c) + TOL:
-                out.append(s)
-        elif s.get("kind") == "sp" and inside(s, c):
-            out.append(s)
-    return out
-
-
 def _ends_page(shapes, y, x0, x1, except_ids):
+    """Nothing else of the page below `y` across [x0, x1]: the block ends the page."""
     for s in shapes:
         if id(s) in except_ids or s.get("kind") == "ph":
             continue
-        sy = cxn_span_y(s)[0] if s.get("kind") == "cxn" else s["y"]
-        sx0, sx1 = (min(s["x1"], s["x2"]), max(s["x1"], s["x2"])) if s.get("kind") == "cxn" else (s["x"], right(s))
+        sy = span_y(s)[0]
+        sx0, sx1 = span_x(s)
         if sy >= y - TOL and sx1 > x0 + TOL and sx0 < x1 - TOL:
             return False
     return True
 
 
-def _shift(s, d):
-    if s.get("kind") == "cxn":
-        s["y1"] += d
-        s["y2"] += d
-    else:
-        s["y"] += d
-
-
-def _span(s):
-    if s.get("kind") == "cxn":
-        return cxn_span_y(s), (min(s["x1"], s["x2"]), max(s["x1"], s["x2"]))
-    return (s["y"], bottom(s)), (s["x"], right(s))
-
-
-def _stretch_cards(shapes, body, changed):
-    if not body:
+def _stretch_cards(shapes, o, changed):
+    if not o.body:
         return
     every = [s for s in shapes if is_card(s)]
     cards = [c for c in every if not _in_grid(c, every)]
@@ -263,95 +425,120 @@ def _stretch_cards(shapes, body, changed):
             continue
         row = [d for d in cards if abs(d["y"] - c["y"]) < TOL and abs(d["h"] - c["h"]) < TOL]
         done.update(id(d) for d in row)
-        if len(row) < 2 and c["h"] < 0.5 * (body["bottom"] - body["top"]):
+        # a card alone is stretched only when it is a panel, not a node in a diagram
+        if len(row) < 2 and c["h"] < 0.5 * (o.body["bottom"] - o.body["top"]):
             continue
         row_bottom = bottom(c)
-        kids = []
-        for card in row:
-            kids += [k for k in _kids(card, shapes) if all(k is not x for x in kids)]
+
+        def kid(s, card):
+            if s is card:
+                return False
+            if s.get("kind") == "cxn":
+                sy, sx = span_y(s), span_x(s)
+                return (sy[0] >= card["y"] - TOL and sy[1] <= bottom(card) + TOL
+                        and sx[0] >= card["x"] - TOL and sx[1] <= right(card) + TOL)
+            return inside(s, card)
+
+        kids = [s for s in shapes if any(kid(s, card) for card in row)]
+        kid_ids = {id(s) for s in kids}
         left = min(x["x"] for x in row)
         right_edge = max(right(x) for x in row)
-        member = set(id(x) for x in row) | set(id(k) for k in kids)
-        between = [s for s in shapes if s.get("kind") == "sp" and id(s) not in member and s["y"] >= c["y"] - TOL
-                   and bottom(s) <= row_bottom + TOL and s["x"] >= left - TOL and right(s) <= right_edge + TOL]
-        except_ids = member | set(id(s) for s in between)
+        row_ids = {id(x) for x in row}
+        # what sits between the row's cards (an arrow) belongs to the row too
+        between = [s for s in shapes if s.get("kind") == "sp" and id(s) not in row_ids and id(s) not in kid_ids
+                   and s["y"] >= c["y"] - TOL and bottom(s) <= row_bottom + TOL
+                   and s["x"] >= left - TOL and right(s) <= right_edge + TOL]
+        except_ids = row_ids | kid_ids | {id(s) for s in between}
         if not _ends_page(shapes, row_bottom - TOL, left, right_edge, except_ids):
             continue
-        if any(id(s) not in except_ids and s.get("kind") == "sp" and abs(bottom(s) - row_bottom) < 0.06
-               and (right(s) <= left + TOL or s["x"] >= right_edge - TOL) for s in shapes):
+        # a bottom edge the page lines up with shapes beside the row stays
+        lined = any(id(s) not in except_ids and s.get("kind") == "sp" and abs(bottom(s) - row_bottom) < 0.06
+                    and (right(s) <= left + TOL or s["x"] >= right_edge - TOL) for s in shapes)
+        if lined:
             continue
-        d = body["bottom"] - row_bottom
+        d = o.body["bottom"] - row_bottom
         if abs(d) < TOL:
             continue
         for card in row:
-            own = _kids(card, shapes)
-            spans = sorted([(_span(s)[0][0], _span(s)[0][1]) for s in own])
+            # the card's foot: what sits under its one clear gap (0.3" or more)
+            # and ends near its bottom; a card without such a gap has no foot
+            own = [s for s in kids if ((span_x(s)[0] >= card["x"] - TOL and span_x(s)[1] <= right(card) + TOL)
+                                       if s.get("kind") == "cxn" else inside(s, card))]
+            spans = sorted(([span_y(s)[0], span_y(s)[1], s] for s in own), key=lambda v: v[0])
             reach = spans[0][1] if spans else 0
-            cut_at, widest = None, 0.3
-            for t0, t1 in spans[1:]:
+            cut = None
+            widest = 0.3
+            for t0, t1, _ in spans[1:]:
                 if t0 - reach >= widest:
-                    widest, cut_at = t0 - reach, t0
+                    widest = t0 - reach
+                    cut = t0
                 reach = max(reach, t1)
-            if cut_at is not None:
-                for s in own:
-                    (y0, y1), _ = _span(s)
-                    if y0 >= cut_at - TOL and row_bottom - y1 < FOOT:
-                        _shift(s, d)
+            feet = [] if cut is None else [s for s in own if span_y(s)[0] >= cut - TOL and row_bottom - span_y(s)[1] < FOOT]
+            for s in feet:
+                _shift(s, d)
             card["h"] += d
-            changed.append({"name": card.get("name") or "card", "what": "card reaches the body's bottom", "from": round(card["h"] - d, 3), "to": round(card["h"], 3)})
+            changed.append({"name": card.get("name") or "card", "what": "card reaches the body's bottom",
+                            "from": _num(card["h"] - d, 3), "to": _num(card["h"], 3)})
         for s in between:
             _shift(s, d / 2)
 
 
-def _distribute(shapes, m, fonts, body, changed, orig_y):
+def _distribute_rows(shapes, o, changed):
+    boxes = [s for s in shapes if is_text_box(s)]
     cols = {}
-    for s in shapes:
-        if not is_text_box(s):
-            continue
-        size = next((r["sz"] for r in s["text"]["paras"][0].get("runs") or [] if r.get("sz")), 12)
-        cols.setdefault("%.2f|%.2f|%s" % (s["x"], s["w"], size), []).append(s)
+    for s in boxes:
+        runs = (s["text"]["paras"][0].get("runs") or []) if s["text"].get("paras") else []
+        k = to_fixed(s["x"], 2) + "|" + to_fixed(s["w"], 2) + "|" + repr(float(_size(runs)))
+        cols.setdefault(k, []).append(s)
     cards = [s for s in shapes if is_card(s)]
     moved = set()
-    order = sorted(cols.values(), key=lambda l: (-len(l), -sum(s["h"] for s in l)))
-    oy = lambda s: orig_y.get(id(s), s.get("y"))
+    # the column with the most text first: its rows carry the other columns
+    order = sorted(cols.values(), key=lambda lst: (-len(lst), -sum(s["h"] for s in lst)))
     for lst in order:
         if len(lst) < 3 or any(id(s) in moved for s in lst):
             continue
         lst.sort(key=lambda s: s["y"])
-        tops0 = [oy(s) for s in lst]
-        pitches = [t - tops0[i] for i, t in enumerate(tops0[1:])]
+        pitches = [lst[i + 1]["origY"] - lst[i]["origY"] for i in range(len(lst) - 1)]
         if max(pitches) - min(pitches) > 0.05 or min(pitches) < 0.2:
             continue
         if any(sum(1 for s in lst if inside(s, c)) > 1 for c in cards):
             continue
-        hs = [text_height(s, m, fonts, True) for s in lst]
-        tts = [text_top(s, m, fonts) for s in lst]
-        p0 = (tops0[-1] - tops0[0]) / (len(lst) - 1)
-        band_top = tops0[0] - p0 / 2
-        band_bottom = tops0[-1] + p0 / 2 + (bottom(lst[-1]) - lst[-1]["y"])
-        in_list = set(id(s) for s in lst)
+        hs = [text_height(s, o, True) for s in lst]
+        tops = [text_top(s, o) for s in lst]
+        last = lst[-1]
+        p0 = (last["origY"] - lst[0]["origY"]) / (len(lst) - 1)
+        band_top = lst[0]["origY"] - p0 / 2
+        band_bottom = last["origY"] + p0 / 2 + (bottom(last) - last["y"])
+        lst_ids = {id(s) for s in lst}
+        # the rows' companions: shapes inside the rows' band, none spanning rows
         members = []
         for s in shapes:
-            if s.get("kind") == "ph" or id(s) in in_list:
+            if s.get("kind") == "ph" or id(s) in lst_ids:
                 continue
-            (sy, sb), _ = _span(s)
+            sy, sb = span_y(s)
             if sy >= band_top - 0.3 and sb <= band_bottom + 0.1 and sb - sy <= 1.2 * p0:
                 members.append(s)
         groups = {}
         for s in members:
-            _, (x0, x1) = _span(s)
-            groups.setdefault("%s|%.1f|%.1f" % (s.get("kind"), x0, x1), []).append(s)
-        top_of = lambda s: _span(s)[0][0] if s.get("kind") == "cxn" else oy(s)
+            sx0, sx1 = span_x(s)
+            groups.setdefault(s.get("kind") + "|" + to_fixed(sx0, 1) + "|" + to_fixed(sx1, 1), []).append(s)
+
+        def top_of(s):
+            if s.get("kind") == "cxn":
+                return span_y(s)[0]
+            return s["origY"] if s.get("origY") is not None else s["y"]
+
         row_index = {}
         orderly = True
         for g in groups.values():
+            # rules between the rows (one fewer than the rows) go with the row under them
             between = len(g) == len(lst) - 1 and all(s.get("kind") == "cxn" for s in g)
             if len(g) != len(lst) and not between:
                 orderly = False
                 break
             g.sort(key=top_of)
             first = 1 if between else 0
-            offs = [top_of(s) - tops0[j + first] for j, s in enumerate(g)]
+            offs = [top_of(s) - lst[j + first]["origY"] for j, s in enumerate(g)]
             if max(offs) - min(offs) > 0.06:
                 orderly = False
                 break
@@ -359,127 +546,199 @@ def _distribute(shapes, m, fonts, body, changed, orig_y):
                 row_index[id(s)] = j + first
         if not orderly:
             continue
-        band_lo, band_hi = tops0[0], bottom(lst[-1])
-        member_ids = set(id(s) for s in members)
+        # rows tied to a graphic beside them stay as drawn
+        member_ids = {id(s) for s in members}
+        band_lo = lst[0]["origY"]
+        band_hi = bottom(last)
         tied = False
         for s in shapes:
-            if (s.get("kind") == "ph" and s.get("type") != "pic") or id(s) in in_list or id(s) in member_ids:
+            if (s.get("kind") == "ph" and s.get("type") != "pic") or id(s) in lst_ids or id(s) in member_ids:
                 continue
-            (sy, sb), _ = _span(s)
+            sy, sb = span_y(s)
             if min(sb, band_hi) - max(sy, band_lo) > 1.2 * p0:
                 tied = True
                 break
         if tied:
             continue
-        last_bottom = tts[-1] + hs[-1]
-        low = max([last_bottom] + [_span(s)[0][1] for s in members])
-        x0 = min([s["x"] for s in lst] + [_span(s)[1][0] for s in members])
-        x1 = max([right(s) for s in lst] + [_span(s)[1][1] for s in members])
-        if not (body and _ends_page(shapes, low - TOL, x0, x1, in_list | member_ids)):
+        last_bottom = tops[-1] + hs[-1]
+        if not o.body:
             continue
-        pitch = min(p0 + (body["bottom"] - 0.05 - last_bottom) / (len(lst) - 1), p0 + MAX_GAP)
+        ends = _ends_page(shapes,
+                          max([last_bottom] + [span_y(s)[1] for s in members]) - TOL,
+                          min([s["x"] for s in lst] + [span_x(s)[0] for s in members]),
+                          max([right(s) for s in lst] + [span_x(s)[1] for s in members]),
+                          member_ids | lst_ids)
+        if not ends:
+            continue
+        # one pitch for every row, no wider than MAX_GAP between texts
+        pitch = min(p0 + (o.body["bottom"] - 0.05 - last_bottom) / (len(lst) - 1), p0 + MAX_GAP, max(hs) + MAX_GAP)
+        # a spread only ever opens rows up: never closer than drawn
         step = pitch - p0
-        if abs(step) < 0.03:
+        if step < 0.03:
             continue
-        for i, s in enumerate(lst):
-            if i:
-                _shift(s, i * step)
+        for s in lst + members:
+            row = _index(lst, s) if id(s) in lst_ids else row_index.get(id(s))
+            if row:
+                _shift(s, row * step)
             moved.add(id(s))
-        for s in members:
-            r = row_index.get(id(s), 0)
-            if r:
-                _shift(s, r * step)
-            moved.add(id(s))
-        changed.append({"name": lst[0].get("name") or "rows", "what": "rows spread to the body's bottom", "from": round(p0, 3), "to": round(pitch, 3)})
+        moved.update(lst_ids)
+        changed.append({"name": lst[0].get("name") or "rows", "what": "rows spread to the body's bottom",
+                        "from": _num(p0, 3), "to": _num(pitch, 3)})
 
 
-def _arrange(shapes, m, fonts, body, changed, spread=True):
+def _arrange(shapes, o, changed, spread=True):
     top = [s for s in shapes if s.get("kind") in ("sp", "cxn")]
-    orig_y, orig_top, orig_bottom = {}, {}, {}
     for s in top:
-        if s.get("kind") != "sp":
-            continue
-        orig_y[id(s)] = s["y"]
-        if is_text_box(s):
-            orig_top[id(s)] = text_top(s, m, fonts)
-            orig_bottom[id(s)] = orig_top[id(s)] + text_height(s, m, fonts, True)
-    _fit_boxes(top, m, fonts, changed)
-    _stack(top, m, fonts, changed, orig_y, orig_top, orig_bottom)
+        if s.get("kind") == "sp":
+            s["origY"] = s["y"]
+    _fit_boxes(top, o, changed)
     if spread:
-        _stretch_cards(top, body, changed)
-        _distribute(top, m, fonts, body, changed, orig_y)
+        _stretch_cards(top, o, changed)
+        _distribute_rows(top, o, changed)
+    for s in top:
+        s.pop("origY", None)
 
 
-def _fits(shapes, m, fonts, body):
+# ---- 4. fill ----------------------------------------------------------------
+
+def _fits(shapes, o):
     boxes = [s for s in shapes if is_text_box(s)]
     cards = [s for s in shapes if is_card(s)]
     for s in boxes:
-        ts = text_top(s, m, fonts)
-        tb = ts + text_height(s, m, fonts)
-        if body and s["y"] < body["bottom"] and tb > body["bottom"] + 0.05:
+        ts = text_top(s, o)
+        tb = ts + text_height(s, o)
+        if o.body and s["y"] < o.body["bottom"] and tb > o.body["bottom"] + 0.05:
             return False
-        for c in cards:
-            if s["x"] >= c["x"] - TOL and right(s) <= right(c) + TOL and c["y"] - TOL <= s["y"] < bottom(c):
-                if tb > bottom(c) + 0.02:
-                    return False
-                break
+        probe = dict(s, h=max(s["h"], 0.01))
+        card = next((c for c in cards if inside(probe, c) or (
+            s["x"] >= c["x"] - TOL and right(s) <= right(c) + TOL and s["y"] >= c["y"] - TOL and s["y"] < bottom(c))), None)
+        if card is not None and tb > bottom(card) + 0.02:
+            return False
+        for L in shapes:
+            if L.get("kind") != "cxn" or abs(L["y1"] - L["y2"]) > 0.02:
+                continue
+            lx = {"x": min(L["x1"], L["x2"]), "w": abs(L["x2"] - L["x1"])}
+            lx["y"], lx["h"] = 0, 0
+            if overlap_x(s, lx) >= 0.2 and ts + 0.02 < L["y1"] < tb - 0.02:
+                return False
+        for f in shapes:
+            if f.get("kind") != "sp" or not f.get("fill") or f.get("rot") or f is s or inside(s, f) or overlap_x(s, f) < 0.2:
+                continue
+            if ts + 0.02 < f["y"] < tb - 0.02 and not (s["y"] >= f["y"] - 0.02 and s["y"] < bottom(f)):
+                return False
         for b in boxes:
             if b is s or overlap_x(s, b) < 0.2:
                 continue
-            bt = text_top(b, m, fonts)
-            if min(tb, bt + text_height(b, m, fonts, True)) - max(ts, bt) > 0.02:
+            bt = text_top(b, o)
+            if min(tb, bt + text_height(b, o, True)) - max(ts, bt) > 0.02:
                 return False
     return True
 
 
 def _raise(shapes, d):
     for s in shapes:
+        # labels in diagrams and charts keep their size
         if not is_text_box(s) or s["w"] < NARROW:
             continue
-        for p in s["text"].get("paras") or []:
+        for p in _paras(s):
             for r in p.get("runs") or []:
                 sz = r.get("sz") or 12
                 if FILL_FROM <= sz <= FILL_TO:
                     r["sz"] = min(MAX_FILL, sz + d)
 
 
-def fit_layout(shapes, fonts=None, measure=None, body=BODY):
+def _run_sizes(shapes):
+    return [r.get("sz") or 12 for s in shapes if is_text_box(s) for p in _paras(s) for r in p.get("runs") or []]
+
+
+def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None):
     """Fits, arranges and fills a page's shapes in place (layoutfit.js).
-    -> (changes, points added to the body text)"""
-    import copy
-    m = measure or Measure()
-    fonts = fonts or {"heading": "Georgia", "body": "Arial"}
+
+    page_id: the library page's id, for its measured cap (layoutfit-caps.json);
+    max_raise: points the fill may add at most (overrides the cap); below 0
+    leaves the page as drawn.
+    -> {"changed": [{name, what, from, to}], "size": points added}"""
+    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None)
+    if isinstance(max_raise, (int, float)) and not isinstance(max_raise, bool):
+        o.max_raise = max_raise
+    elif page_id is not None and isinstance(CAPS.get(page_id), (int, float)):
+        o.max_raise = CAPS[page_id]
     changed = []
+    if o.max_raise is not None and o.max_raise < 0:
+        return {"changed": changed, "size": 0}
     if sum(1 for s in shapes if is_text_box(s)) < 2:
-        return changed, 0
+        return {"changed": changed, "size": 0}
     base = copy.deepcopy(shapes)
+    # tables, groups and pictures are never moved: a page with one is only fitted
     fixed = any(s.get("kind") in ("tbl", "grp", "pic") for s in shapes)
-    _arrange(shapes, m, fonts, body, changed, spread=not fixed)
-    if not _fits(shapes, m, fonts, body):
+    _arrange(shapes, o, changed, not fixed)
+    if not _fits(shapes, o):
         plain = copy.deepcopy(base)
         ch = []
-        _arrange(plain, m, fonts, body, ch, spread=False)
+        _arrange(plain, o, ch, False)
         shapes[:] = plain
-        return ch, 0
-    if not body:
-        return changed, 0
-    sizes = [r.get("sz") or 12 for s in shapes if is_text_box(s) for p in s["text"].get("paras") or [] for r in p.get("runs") or []]
-    sizes = [z for z in sizes if FILL_FROM <= z <= FILL_TO]
+        return {"changed": ch, "size": 0}
+    if not o.body:
+        return {"changed": changed, "size": 0}
+    sizes = [z for z in _run_sizes(shapes) if FILL_FROM <= z <= FILL_TO]
     if not sizes:
-        return changed, 0
+        return {"changed": changed, "size": 0}
+    # body text stays half a point under the smallest text the fill leaves alone
+    kept = [z for z in _run_sizes(shapes) if FILL_TO < z < 20]
+    ceiling = min(MAX_FILL, min(kept) - 0.5 if kept else MAX_FILL)
+    # labels outside a column of rows may not gain a line
+    base_lines = [lines_of(s, o) if is_text_box(s) and not _in_row_column(s, base) else None for s in base]
+    # rows lined up as drawn stay lined up
+    aligned = []
+    for i, a in enumerate(base):
+        if not is_text_box(a):
+            continue
+        for j in range(i + 1, len(base)):
+            b = base[j]
+            if not is_text_box(b) or overlap_x(a, b) > 0:
+                continue
+            if abs(text_top(a, o) - text_top(b, o)) <= 0.02:
+                aligned.append((i, j))
+    # columns of three or more boxes keep at least the span their texts had
+    col_idx = {}
+    for i, s in enumerate(base):
+        if is_text_box(s):
+            col_idx.setdefault(to_fixed(s["x"], 2) + "|" + to_fixed(s["w"], 2), []).append(i)
+
+    def span_of(lst, idx):
+        tops = [text_top(lst[i], o) for i in idx]
+        return max(tops) - min(tops)
+
+    columns = [(idx, span_of(base, idx)) for idx in col_idx.values() if len(idx) >= 3]
+    base_sideways = sideways_hits(base, o)
+    cap = o.max_raise if o.max_raise is not None else INF
     best = None
     d = 0.5
-    while max(sizes) + d <= MAX_FILL + 1e-9:
+    while max(sizes) + d <= ceiling + 1e-9 and d <= cap + 1e-9:
         trial = copy.deepcopy(base)
         _raise(trial, d)
+        if any(base_lines[i] is not None and lines_of(s, o) > base_lines[i] for i, s in enumerate(trial)):
+            break
         ch = []
-        _arrange(trial, m, fonts, body, ch, spread=not fixed)
-        if not _fits(trial, m, fonts, body):
+        _arrange(trial, o, ch, not fixed)
+        if not _fits(trial, o):
+            break
+        if any(span_of(trial, idx) < span - 0.05 for idx, span in columns):
+            break
+        if sideways_hits(trial, o) > base_sideways:
+            break
+        if any(abs(text_top(trial[i], o) - text_top(trial[j], o)) > 0.05 for i, j in aligned):
             break
         best = (trial, d, ch)
         d += 0.5
     if not best:
-        return changed, 0
+        return {"changed": changed, "size": 0}
     shapes[:] = best[0]
     best[2].append({"name": "page", "what": "body text up to fill the page", "from": 0, "to": best[1]})
-    return best[2], best[1]
+    return {"changed": best[2], "size": best[1]}
+
+
+def page_fits(shapes, fonts=None, measure=None, body=BODY):
+    """No text past the body's bottom, out of its card, onto a rule, into a
+    filled shape or into another text (the fill's own check)."""
+    return _fits(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None))

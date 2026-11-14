@@ -1,0 +1,12 @@
+{
+ "about": "Points layoutfit.js may add to a page's body text at most, measured in the export preview by tools/library-overflow.mjs. Pages not listed: no cap.",
+ "caps": {
+  "lib-hierarchy-org-4level": 0.5,
+  "lib-house-fromto": 0.5,
+  "lib-house-twoplans": -1,
+  "lib-messages-figures-units": 1.5,
+  "lib-people-profile-skills": 0.5,
+  "lib-steps-folded-rows-4": 1,
+  "matrix-2x2": 0
+ }
+}

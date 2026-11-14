@@ -3,7 +3,10 @@
 
 Builds small decks with python-pptx (16:9 and 4:3), runs read_deck.py and
 beautify_deck.py on them, and checks the output: slides in place, words
-carried over, notes kept, the original untouched, bad plans refused.
+carried over, notes kept, the original untouched, bad plans refused. And
+holds layoutfit.py to layoutfit.js on recorded library pages
+(tools/vectors-layoutfit.json, from lavender tools/layoutfit-vectors.mjs):
+every field of every shape within 0.0002 in or pt, and the same points added.
 """
 
 import hashlib
@@ -12,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import copy
 import unittest
 
 from pptx import Presentation
@@ -20,6 +24,9 @@ from pptx.util import Inches
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", "slide-beautify", "scripts")
 READ = os.path.join(ROOT, "read_deck.py")
 BEAUTIFY = os.path.join(ROOT, "beautify_deck.py")
+VECTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors-layoutfit.json")
+sys.path.insert(0, ROOT)
+import layoutfit  # noqa: E402
 
 SUMMARY = [("Context", "The market grew 6% a year since 2021, but our share fell two points"),
            ("What we found", "Most of the lost share sits in two segments where rivals cut prices"),
@@ -148,6 +155,23 @@ class Beautify(unittest.TestCase):
         r = run(BEAUTIFY, self.deck, self.plan, self.deck)
         self.assertNotEqual(r.returncode, 0)
 
+    def test_layout_pass_runs_and_can_be_turned_off(self):
+        for wide in (True, False):
+            make_deck(self.deck, wide=wide)
+            self.write_plan(plan_for())
+            r = run(BEAUTIFY, self.deck, self.plan, self.out)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            rep = json.loads(r.stdout)["rebuilt"][0]
+            self.assertTrue(any("fitted to their text" in x for x in rep["layout"]), rep)
+            self.assertGreaterEqual(rep["text_up"], 0)
+            prs = Presentation(self.out)
+            for sh in prs.slides[1].shapes:
+                self.assertLessEqual(sh.left + sh.width, prs.slide_width + 9525)
+                self.assertLessEqual(sh.top + sh.height, prs.slide_height + 9525)
+            r = run(BEAUTIFY, self.deck, self.plan, self.out, "--no-fit")
+            rep = json.loads(r.stdout)["rebuilt"][0]
+            self.assertEqual((rep["layout"], rep["text_up"]), ([], 0))
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
@@ -158,6 +182,97 @@ class Beautify(unittest.TestCase):
         shrunk = json.loads(r.stdout)["rebuilt"][0]["shrunk"]
         sizes = {line.split(" to ")[1] for line in shrunk if line.startswith(("s2 ", "s4 ", "s6 "))}
         self.assertEqual(len(sizes), 1, shrunk)
+
+
+
+def rounded(x):
+    if isinstance(x, bool) or x is None or isinstance(x, str):
+        return x
+    if isinstance(x, (int, float)):
+        return round(x, 4)
+    if isinstance(x, list):
+        return [rounded(v) for v in x]
+    return {k: rounded(v) for k, v in x.items()}
+
+
+def first_difference(a, b, path=""):
+    """None when a and b agree (numbers within 0.0002), else where they part."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            d = first_difference(a.get(k), b.get(k), path + "." + k)
+            if d:
+                return d
+        return None
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return "%s: %d items vs %d" % (path, len(a), len(b))
+        for i, (x, y) in enumerate(zip(a, b)):
+            d = first_difference(x, y, "%s[%d]" % (path, i))
+            if d:
+                return d
+        return None
+    num = (int, float)
+    if isinstance(a, num) and isinstance(b, num) and not isinstance(a, bool) and not isinstance(b, bool):
+        return None if abs(a - b) <= 2e-4 else "%s: %r vs %r" % (path, a, b)
+    return None if a == b else "%s: %r vs %r" % (path, a, b)
+
+
+class LayoutFitParity(unittest.TestCase):
+    """layoutfit.py does to each recorded page what layoutfit.js did."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(VECTORS, encoding="utf-8") as fh:
+            cls.vectors = json.load(fh)["vectors"]
+        cls.measure = layoutfit.Measure()
+
+    def run_page(self, v, **kw):
+        shapes = copy.deepcopy(v["input"])
+        r = layoutfit.fit_layout(shapes, fonts=v["fonts"], measure=self.measure, body=v["body"], **kw)
+        return shapes, r
+
+    def test_every_recorded_page_matches(self):
+        self.assertGreaterEqual(len(self.vectors), 60)
+        for v in self.vectors:
+            shapes, r = self.run_page(v, page_id=v["id"])
+            with self.subTest(page=v["id"]):
+                self.assertIsNone(first_difference(rounded(shapes), v["expect"]))
+                self.assertEqual(r["size"], v["size"])
+
+    def test_caps_hold(self):
+        capped = [v for v in self.vectors if v["id"] in layoutfit.CAPS]
+        self.assertGreaterEqual(len(capped), 7)
+        for v in capped:
+            cap = layoutfit.CAPS[v["id"]]
+            _, r = self.run_page(v, page_id=v["id"])
+            self.assertLessEqual(r["size"], max(cap, 0))
+        # a page below zero is left exactly as drawn
+        v = next(v for v in capped if layoutfit.CAPS[v["id"]] < 0)
+        shapes, r = self.run_page(v, page_id=v["id"])
+        self.assertEqual(r, {"changed": [], "size": 0})
+        self.assertEqual(shapes, v["input"])
+
+    def test_fill_touches_only_body_text(self):
+        # only runs drawn at 9 to 13.5 pt change; each grows by the page's step, never past 14 pt
+        for v in self.vectors:
+            shapes, r = self.run_page(v, page_id=v["id"])
+            if not r["size"] or len(shapes) != len(v["input"]):
+                continue
+            for before, after in zip(v["input"], shapes):
+                for pb, pa in zip((before.get("text") or {}).get("paras", []), (after.get("text") or {}).get("paras", [])):
+                    for rb, ra in zip(pb.get("runs", []), pa.get("runs", [])):
+                        was, now = rb.get("sz") or 12, ra.get("sz") or 12
+                        if now == was:
+                            continue
+                        with self.subTest(page=v["id"]):
+                            self.assertTrue(layoutfit.FILL_FROM <= was <= layoutfit.FILL_TO)
+                            self.assertEqual(now, min(layoutfit.MAX_FILL, was + r["size"]))
+
+    def test_to_fixed_rounds_like_js(self):
+        self.assertEqual(layoutfit.to_fixed(0.125, 2), "0.13")
+        self.assertEqual(layoutfit.to_fixed(1.005, 2), "1.00")
+        self.assertEqual(layoutfit.to_fixed(-0.125, 2), "-0.13")
+        self.assertEqual(layoutfit.to_fixed(2.5, 0), "3")
 
 
 if __name__ == "__main__":

@@ -66,6 +66,8 @@ It writes a new file. The original is never changed. Each planned slide is repla
 
 The report lists, for each rebuilt slide, the slots filled, kept and cleared, any text made smaller to fit (one size for each kind of text on the page, so the page stays even), and warnings for text that may still overflow. Shorten that text in the plan and run again until there are no overflow warnings.
 
+Then each page gets the library's own layout pass, so it reads full and even with the user's words: every plain text box is fitted to its text (Resize Shape to Fit Text stays on), a row of cards or a list of rows that ends the page is spread to the bottom of the body (never closer than drawn), and body text is raised half a point at a time while everything still fits (9 to 13.5 pt text only, never past 14 pt). The report says what it did under `layout` and how many points the body text went up under `text_up`. Add `--no-fit` to draw the pages exactly as the library drew them, for comparison.
+
 ## 5. Check the result
 
 - If the slide-review skill is installed, run its script on the new file (`python3 ../slide-review/scripts/review_deck.py "<new file>"`) and pass on anything new, such as a title number that is no longer on the page.
