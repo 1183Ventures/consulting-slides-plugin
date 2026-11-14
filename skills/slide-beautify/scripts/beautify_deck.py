@@ -319,16 +319,17 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
     slots_of = [slot for _, _, slot, _ in drafts]
     drawn_at = [place.pt(f[0][1]) if f is not None else None for _, _, _, f in drafts]
 
-    def sized(step):
+    def sized(step, keep=frozenset()):
         """The page with each text at its shrink-first size; with a step (fit
         first), plain text boxes start from the page's own size and give up
-        half a point a step, never below their shrink-first size."""
+        half a point a step, never below their shrink-first size (those in
+        `keep` stay at their shrink-first size)."""
         out = []
         for i, s, slot, fitted in drafts:
             s = copy.deepcopy(s)
             if fitted is not None:
                 own, size = place.pt(fitted[0][1]), sizes[fitted[0]]
-                if step is not None and layoutfit.is_text_box(s):
+                if step is not None and layoutfit.is_text_box(s) and len(out) not in keep:
                     size = max(size, own - 0.5 * step)
                 if size < own:
                     for p in (s.get("text") or {}).get("paras", []):
@@ -349,21 +350,47 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             today = sized(None)
             judge = lay_out(today, page, place, faces, {"warnings": []})["measure"]
 
+            o_judge = layoutfit._O(judge, faces[0], layoutfit.BODY, None)
+
             def lines(lst):
-                # lines of each big text (18 pt and up: a figure, a header), which may not gain one
-                o = layoutfit._O(judge, faces[0], layoutfit.BODY, None)
-                return [layoutfit.lines_of(x, o) if layoutfit.is_text_box(x) and max(
-                    (r.get("sz") or 12 for p in x["text"].get("paras", []) for r in p.get("runs", [])), default=0) >= 18 / scale
-                    else 0 for x in lst]
+                return [layoutfit.lines_of(x, o_judge) if layoutfit.is_text_box(x) else 0 for x in lst]
+
+            def big(x):
+                return max((r.get("sz") or 12 for p in x["text"].get("paras", []) for r in p.get("runs", [])), default=0) >= 18 / scale
+
+            def on_fill(i, lst):
+                # a text box whose middle sits on a filled shape (a card, a band): its box is fixed
+                x = lst[i]
+                cx, cy = x["x"] + x["w"] / 2, x["y"] + x["h"] / 2
+                return any(f is not x and f.get("kind") == "sp" and layoutfit.js_truthy(f.get("fill"))
+                           and not layoutfit.is_text_box(f) and f["x"] <= cx <= f["x"] + f["w"] and f["y"] <= cy <= f["y"] + f["h"]
+                           for f in lst)
+
+            # row peers as drawn: one top, size, weight and colour (layoutfit's own row key)
+            def row_key(x):
+                r = ((x.get("text") or {}).get("paras") or [{}])[0].get("runs") or [{}]
+                return (round(x.get("y", 0) * 50), r[0].get("sz") or 12, bool(r[0].get("b")), r[0].get("color") or "")
+            drawn = [s for _, s, _, _ in drafts]
+            guarded = [i for i, x in enumerate(today) if layoutfit.is_text_box(x) and (big(x) or on_fill(i, today))]
+            base_lines = lines(today)
             for step in range(steps + 1):
-                trial = sized(step)
-                if not lay_out(trial, page, place, faces, {"warnings": []})["fits"] and step < steps:
+                # a guarded text that would gain a line stays at today's size, and its row peers with it
+                keep = set()
+                for _ in range(6):
+                    trial = sized(step, keep)
+                    ok = lay_out(trial, page, place, faces, {"warnings": []})["fits"]
+                    grew = {i for i in guarded if lines(trial)[i] > base_lines[i]} - keep
+                    if not grew:
+                        break
+                    keys = {row_key(drawn[i]) for i in grew}
+                    keep |= grew | {j for j, x in enumerate(drawn) if layoutfit.is_text_box(x) and row_key(x) in keys}
+                if not ok and step < steps:
                     continue
-                # kept only where it is a plain gain: no text smaller than today, one larger
+                # kept only where it is a plain gain: no text smaller than today, no guarded text on a new line, one larger
                 pairs = [(a, b) for xa, xb in zip(finals(today), finals(trial)) for a, b in zip(xa, xb)]
-                more = any(b > a for a, b in zip(lines(today), lines(trial)))
-                if not more and all(b >= a - 1e-9 for a, b in pairs) and any(b > a + 1e-9 for a, b in pairs):
-                    shapes = sized(step)   # fresh: the pass runs once on what is drawn
+                more = any(lines(trial)[i] > base_lines[i] for i in guarded)
+                if ok and not more and all(b >= a - 1e-9 for a, b in pairs) and any(b > a + 1e-9 for a, b in pairs):
+                    shapes = sized(step, keep)   # fresh: the pass runs once on what is drawn
                 break
         lay_out(shapes, page, place, faces, report)
         if dump is not None:
