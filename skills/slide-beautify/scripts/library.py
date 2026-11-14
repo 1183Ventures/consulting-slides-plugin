@@ -12,9 +12,16 @@ own browser, and this script receives a token for the conversation.
     python3 library.py pages --out pages-full.json   # the full catalogue, for beautify_deck.py --pages
     python3 library.py status           # whether a token is held, and until when
 
+It talks only to https://slideshortcuts.com, and no setting, argument or
+environment variable changes that: a deck with hidden instructions cannot
+send the key anywhere else. Redirects are refused. What the server says back
+is printed only when it passes a strict check (a link only to the sign-in
+page, a count only as a whole number, an error only by its short name).
+
 What is kept on this computer: the token and its expiry (12 hours), and while
-a sign-in is open, its code and poll secret, in ~/.slideshortcuts/ (or
-SLIDESHORTCUTS_HOME). Never the key or an email. Decks are never sent.
+a sign-in is open, its code and poll secret, in ~/.slideshortcuts/ (a folder
+only this user can open; files created private, links never followed). Never
+the key or an email. Decks are never sent.
 
 Every refusal prints one plain sentence and exits with status 2. Standard
 library only.
@@ -23,15 +30,22 @@ library only.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 
-API = os.environ.get("SLIDESHORTCUTS_API", "https://slideshortcuts.com/.netlify/functions/beautify")
-HOME = os.environ.get("SLIDESHORTCUTS_HOME", os.path.join(os.path.expanduser("~"), ".slideshortcuts"))
-TOKEN_FILE = os.path.join(HOME, "beautify-token.json")
-SIGNIN_FILE = os.path.join(HOME, "beautify-signin.json")
+SITE = "https://slideshortcuts.com/"
+API = SITE + ".netlify/functions/beautify"
+ACTIVATE = SITE + "activate/"
+HOME = os.path.join(os.path.expanduser("~"), ".slideshortcuts")
+TOKEN_NAME = "beautify-token.json"
+SIGNIN_NAME = "beautify-signin.json"
+
+# In-process only: the tests swap this for a fake server. No environment
+# variable, argument or file can set it.
+_TRANSPORT = None
 
 SAY = {
     "not_open": "The full library is not open yet. The skill's sample pages work as they are.",
@@ -44,82 +58,149 @@ SAY = {
     "code_used": "That sign-in code was already used. Run `library.py start` again.",
     "bad_code": "That sign-in code is not valid. Run `library.py start` again.",
     "unreachable": "slideshortcuts.com could not be reached. Check the connection and try again.",
+    "redirected": "slideshortcuts.com answered with a redirect, which this script does not follow. Try again later.",
+    "bad_answer": "slideshortcuts.com sent an answer this script does not understand. Try again later.",
 }
+FINAL = {"code_expired", "code_used", "bad_code", "license_required", "not_open"}
+ERROR_NAME = re.compile(r"^[a-z_]{1,32}$")
+CODE = re.compile(r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 
 class Refused(Exception):
     def __init__(self, code):
         Exception.__init__(self, code)
-        self.code = code
+        self.code = code if isinstance(code, str) and ERROR_NAME.match(code) else "bad_answer"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise Refused("redirected")
+
+
+def _opener():
+    return urllib.request.build_opener(_NoRedirect)
+
+
+def _http(url, data, headers, timeout):
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    try:
+        with _opener().open(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as err:
+        if 300 <= err.code < 400:
+            raise Refused("redirected")
+        return err.code, err.read()
 
 
 def call(action, body=None, token=None, timeout=30):
-    data = json.dumps(dict(body or {}, action=action)).encode("utf-8")
-    req = urllib.request.Request(API, data=data, method="POST", headers={"Content-Type": "application/json",
-                                                                        "User-Agent": "slide-beautify-skill"})
-    if token:
-        req.add_header("Authorization", "Bearer " + token)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            out = json.loads(resp.read().decode("utf-8") or "{}")
-    except urllib.error.HTTPError as err:
-        try:
-            out = json.loads(err.read().decode("utf-8") or "{}")
-        except ValueError:
-            out = {}
-        raise Refused(out.get("error") or "unreachable")
-    except (urllib.error.URLError, OSError, ValueError):
+    if not API.startswith(SITE) or not SITE.startswith("https://"):
         raise Refused("unreachable")
-    if not out.get("ok"):
-        raise Refused(out.get("error") or "unreachable")
+    data = json.dumps(dict(body or {}, action=action)).encode("utf-8")
+    headers = {"Content-Type": "application/json", "User-Agent": "slide-beautify-skill"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    try:
+        status, raw = (_TRANSPORT or _http)(API, data, headers, timeout)
+        out = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw or "{}")
+    except Refused:
+        raise
+    except (urllib.error.URLError, OSError):
+        raise Refused("unreachable")
+    except ValueError:
+        raise Refused("bad_answer")
+    if not isinstance(out, dict):
+        raise Refused("bad_answer")
+    if not out.get("ok") or status >= 400:
+        raise Refused(out.get("error") or "bad_answer")
     return out
 
 
-def _save(path, value):
-    os.makedirs(HOME, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(value, fh)
-    os.chmod(path, 0o600)
+def _home():
+    if os.path.islink(HOME):
+        raise Refused("bad_answer")
+    os.makedirs(HOME, mode=0o700, exist_ok=True)
+    os.chmod(HOME, 0o700)
+    return HOME
 
 
-def _load(path):
+def _save(name, value):
+    """Created private from the start, never through a link, then moved into place."""
+    home = _home()
+    path = os.path.join(home, name)
+    tmp = os.path.join(home, ".%s.%d.tmp" % (name, os.getpid()))
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(tmp, flags, 0o600)
     try:
-        with open(path, encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(value, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def _load(name):
+    path = os.path.join(HOME, name)
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return None
 
 
+def _drop(name):
+    path = os.path.join(HOME, name)
+    if os.path.lexists(path):
+        os.remove(path)
+
+
 def _keep_token(out):
-    _save(TOKEN_FILE, {"token": out["token"], "expires": time.time() + float(out.get("expires_in") or 0)})
+    token = out.get("token")
+    if not isinstance(token, str) or not re.match(r"^[A-Za-z0-9_-]{20,200}$", token):
+        raise Refused("bad_answer")
+    life = out.get("expires_in")
+    life = life if isinstance(life, (int, float)) and 0 < life <= 86400 else 43200
+    _save(TOKEN_NAME, {"token": token, "expires": time.time() + life})
 
 
 def held_token():
-    t = _load(TOKEN_FILE)
+    t = _load(TOKEN_NAME)
     return t["token"] if t and t.get("token") and t.get("expires", 0) > time.time() + 60 else None
 
 
 def start():
     out = call("start")
-    _save(SIGNIN_FILE, {"code": out["code"], "poll": out["poll"], "interval": out.get("interval") or 5,
-                        "until": time.time() + float(out.get("expires_in") or 600)})
-    print("Open %s in your browser and sign in with the email and key of your SlideShortcuts account." % out["url"])
-    print("Your code is %s. Come back here when it says you are signed in." % out["code"])
+    code, poll = out.get("code"), out.get("poll")
+    if not (isinstance(code, str) and CODE.match(code) and isinstance(poll, str) and 20 <= len(poll) <= 200):
+        raise Refused("bad_answer")
+    _save(SIGNIN_NAME, {"code": code, "poll": poll, "interval": 5,
+                        "until": time.time() + min(float(out.get("expires_in") or 600), 900)})
+    # the page shown is always our own sign-in page, never a link the server sends
+    print("Open %s in your browser and sign in with the email and key of your SlideShortcuts account." % ACTIVATE)
+    print("Type this code there when the page asks for it: %s. Come back here when it says you are signed in." % code)
 
 
 def wait(limit=600):
-    s = _load(SIGNIN_FILE)
+    s = _load(SIGNIN_NAME)
     if not s:
         raise Refused("sign_in_required")
     end = min(s["until"], time.time() + limit)
-    while time.time() < end:
-        out = call("poll", {"code": s["code"], "poll": s["poll"]})
-        if out.get("state") == "approved" and out.get("token"):
-            _keep_token(out)
-            os.remove(SIGNIN_FILE)
-            print("Signed in. The full library is open to this conversation for 12 hours.")
-            return
-        time.sleep(max(1, float(s.get("interval") or 5)))
+    try:
+        while time.time() < end:
+            out = call("poll", {"code": s["code"], "poll": s["poll"]})
+            if out.get("state") == "approved" and out.get("token"):
+                _keep_token(out)
+                _drop(SIGNIN_NAME)
+                print("Signed in. The full library is open to this conversation for 12 hours.")
+                return
+            time.sleep(max(1, float(s.get("interval") or 5)))
+    except Refused as err:
+        if err.code in FINAL:
+            _drop(SIGNIN_NAME)
+        raise
+    _drop(SIGNIN_NAME)
     raise Refused("code_expired")
 
 
@@ -137,14 +218,19 @@ def pages(out_path):
     if not token:
         raise Refused("sign_in_required")
     out = call("pages", token=token, timeout=90)
+    pages_list = out.get("pages")
+    if not isinstance(pages_list, list):
+        raise Refused("bad_answer")
     with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump({"version": out.get("version"), "canvas": out.get("canvas"), "pages": out.get("pages") or []}, fh)
-    print("%d pages written to %s (%s fetches left today)." % (len(out.get("pages") or []), out_path, out.get("remaining")))
+        json.dump({"version": out.get("version"), "canvas": out.get("canvas"), "pages": pages_list}, fh)
+    left = out.get("remaining")
+    left = ("%d fetches left today" % left) if isinstance(left, int) and not isinstance(left, bool) and 0 <= left < 10000 else "fetches left today unknown"
+    print("%d pages written to %s (%s)." % (len(pages_list), out_path, left))
 
 
 def status():
-    t = _load(TOKEN_FILE)
-    if t and t.get("expires", 0) > time.time() + 60:
+    t = _load(TOKEN_NAME)
+    if t and isinstance(t.get("expires"), (int, float)) and t["expires"] > time.time() + 60:
         print("Signed in until %s." % time.strftime("%H:%M on %d %b", time.localtime(t["expires"])))
     else:
         print("Not signed in. The skill's sample pages work without signing in.")
