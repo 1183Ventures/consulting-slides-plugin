@@ -418,6 +418,15 @@ class LayoutFitParity(unittest.TestCase):
         self.assertEqual(len(leads), 3)
         self.assertEqual(len(set(leads)), 1, leads)
 
+    def test_spacing_rounds_down_to_half_points_and_keeps_the_librarys(self):
+        import pagexml
+        E = 914400
+        lib = pagexml.Place(int(13.333 * E), int(7.5 * E))
+        self.assertEqual([lib.spacing(v) for v in (4, 8, 12)], [4, 8, 12])
+        screen = pagexml.Place(int(10 * E), int(5.625 * E))
+        self.assertEqual(screen.spacing(12), 9.0)
+        self.assertEqual(screen.spacing(10), 7.5)
+
     def test_comparer_tells_missing_from_null(self):
         self.assertIsNotNone(first_difference({"a": None}, {}))
         self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))

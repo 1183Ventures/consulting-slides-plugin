@@ -165,7 +165,8 @@ class Place:
     def spacing(self, points):
         """Paragraph spacing on the slide: scaled as the text is, rounded down to
         a half point (PowerPoint's Paragraph box shows 12, not 11.88)."""
-        return math.floor(points * min(self.s, self.sy * self.k) * 2 + 1e-9) / 2
+        # rounded to a thousandth first: a deck of the library's size scales by 0.99999998
+        return math.floor(round(points * min(self.s, self.sy * self.k) * 2, 3)) / 2
 
     def box(self, x, y, w, h, geom=None):
         """x, y, width, height in EMU; round shapes keep their proportions."""
