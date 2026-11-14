@@ -394,20 +394,33 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             def row_key(x):
                 r = ((x.get("text") or {}).get("paras") or [{}])[0].get("runs") or [{}]
                 return (round(x.get("y", 0) * 50), r[0].get("sz") or 12, bool(r[0].get("b")), r[0].get("color") or "")
+            # a kind as the shrink step sizes it: role, and size, weight and colour as drawn
+            def kind_key(j):
+                x, slot = drafts[j][1], drafts[j][2]
+                r = ((x.get("text") or {}).get("paras") or [{}])[0].get("runs") or [{}]
+                return ((slot or {}).get("role"), r[0].get("sz") or 12, bool(r[0].get("b")), r[0].get("color") or "")
+
             drawn = [s for _, s, _, _ in drafts]
             guarded = [i for i, x in enumerate(today) if layoutfit.is_text_box(x) and (big(x) or on_fill(i, today))]
             base_lines = lines(today)
+
+            def with_peers(idx):
+                # a text kept at today's size keeps its row and its whole kind with it (Reviewer, 14 Nov 2026)
+                rows, kinds = {row_key(drawn[i]) for i in idx}, {kind_key(i) for i in idx}
+                return set(idx) | {j for j, x in enumerate(drawn) if layoutfit.is_text_box(x) and (row_key(x) in rows or kind_key(j) in kinds)}
+
+            # a big text that already wraps today never grows (Reviewer: "$24M $24M" rose into the title)
+            wraps = with_peers({i for i in guarded if big(today[i]) and base_lines[i] > 1}) if guarded else set()
             for step in range(steps + 1):
-                # a guarded text that would gain a line stays at today's size, and its row peers with it
-                keep = set()
+                # a guarded text that would gain a line stays at today's size, with its row and kind
+                keep = set(wraps)
                 for _ in range(6):
                     trial = sized(step, keep)
                     ok = lay_out(trial, page, place, faces, {"warnings": []})["fits"]
                     grew = {i for i in guarded if lines(trial)[i] > base_lines[i]} - keep
                     if not grew:
                         break
-                    keys = {row_key(drawn[i]) for i in grew}
-                    keep |= grew | {j for j, x in enumerate(drawn) if layoutfit.is_text_box(x) and row_key(x) in keys}
+                    keep |= with_peers(grew)
                 if not ok and step < steps:
                     continue
                 # kept only where it is a plain gain: no text smaller than today, no guarded text on a new line, one larger

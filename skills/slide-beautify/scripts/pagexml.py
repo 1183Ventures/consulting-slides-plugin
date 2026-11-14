@@ -130,9 +130,12 @@ class Place:
         if content_top is not None and title_bottom_emu is not None:
             # the content keeps 0.12 in clear of the deck's title box, or the
             # clearance the page itself keeps under the library's own title
-            # box (LIB_TITLE_BOTTOM) when that is less: a page whose column
-            # heads start above it is never squeezed under a title that ends
-            # where the library's does
+            # box (LIB_TITLE_BOTTOM) when that is less. A page changes wherever
+            # the deck's title ends less than that clearance above the page's
+            # first shape, not only under a title lower than the library's:
+            # on a deck whose title ends at 1.46 in, side-title, vertical-steps
+            # and matrix-2x2 change (Reviewer, 14 Nov 2026: 41 of 364 slides,
+            # none wrongly)
             clear = min(0.12, content_top - LIB_TITLE_BOTTOM)
             want = title_bottom_emu + clear * EMU * self.sy
             have = content_top * EMU * self.sy

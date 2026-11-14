@@ -263,6 +263,40 @@ class Beautify(unittest.TestCase):
             rep = json.loads(r.stdout)["rebuilt"][0]
             self.assertEqual(any("title area" in w for w in rep["warnings"]), warned, (f, rep["warnings"]))
 
+    def test_fit_first_keeps_kinds_together(self):
+        # a text kept at today's size keeps its whole kind (Reviewer, 14 Nov 2026: kpi-tiles' figures at
+        # 35 and 40 pt, two-options); 2cc6320 split both on these decks
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            pages = {p["id"]: p for p in json.load(fh)["pages"]}
+        picks = [pages["kpi-tiles"], pages["two-options"], pages["big-numbers"]]
+        for faces in (None, ("Georgia", "Arial")):
+            check_slide_fit.make_deck(self.deck, True, False, len(picks), faces)
+            with open(self.plan, "w", encoding="utf-8") as fh:
+                json.dump(check_slide_fit.plan_for(picks, 1.4), fh)
+            dump = os.path.join(self.dir, "ff.json")
+            r = run(BEAUTIFY, self.deck, self.plan, self.out, "--fit-first", "--dump-shapes", dump)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(dump, encoding="utf-8") as fh:
+                slides = json.load(fh)["slides"]
+            for sl in slides:
+                kinds = {}
+                for d, a in zip(pages[sl["id"]]["shapes"], sl["shapes"]):
+                    if not layoutfit.is_text_box(d):
+                        continue
+                    r0 = ((d.get("text") or {}).get("paras") or [{}])[0].get("runs") or [{}]
+                    key = (r0[0].get("sz") or 12, bool(r0[0].get("b")), r0[0].get("color") or "")
+                    kinds.setdefault(key, set()).add(round((a["text"]["paras"][0].get("runs") or [{}])[0].get("sz") or 12, 2))
+                for key, sizes in kinds.items():
+                    self.assertEqual(len(sizes), 1, (faces, sl["id"], key, sizes))
+            # a big text that already wraps never grows: big-numbers warns no more than it does by default
+            rep = json.loads(r.stdout)["rebuilt"]
+            r2 = run(BEAUTIFY, self.deck, self.plan, self.out)
+            base = json.loads(r2.stdout)["rebuilt"]
+            for a, b in zip(base, rep):
+                self.assertLessEqual(len(b["warnings"]), len(a["warnings"]), (a["page"], b["warnings"]))
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
