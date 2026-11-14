@@ -51,9 +51,11 @@ FACES = {  # common Office theme faces (Reviewer, 13 Nov 2026: decks in other fa
     "Times New Roman": (SUPP + "/Times New Roman.ttf", SUPP + "/Times New Roman Bold.ttf"),
 }
 
-# faces whose line takes the larger of the Mac and Windows figures until the Windows
-# render settles it: Aptos, the default body face (CEO, 14 Nov 2026)
-SAFE_LINE = {"Aptos"}
+# faces whose line takes the larger of the Mac and Windows figures (none now: the Windows
+# render drew Aptos at 1.2, so the Mac figure stands; CEO, 14 Nov 2026)
+SAFE_LINE = set()
+# cloud faces read at their Mac figure, as probed (Poppins, DM Sans and the rest keep the larger until probed)
+MAC_LINE = {"Aptos Display"}
 CLOUD_DIR = os.path.expanduser("~/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
 CLOUD = {  # face -> folder in Office's cloud font cache
     "Aptos Display": "Aptos Display",   # the heading face of PowerPoint's default theme (Microsoft)
@@ -243,9 +245,10 @@ def main():
             if not pair:
                 print("skip", face, "(no regular and bold in Office's cloud font cache)")
                 continue
-            tables["fonts"][face] = table_for(pair[0], pair[1], chars, safe_line=True)
-            sources[face] = "widths and line (larger of Mac hhea and Windows OS/2) read %s from Office's cloud font cache on a Mac (%s, %s)" % (
-                today, os.path.basename(pair[0]), os.path.basename(pair[1]))
+            mac = face in MAC_LINE
+            tables["fonts"][face] = table_for(pair[0], pair[1], chars, safe_line=not mac)
+            sources[face] = "widths and line (%s) read %s from Office's cloud font cache on a Mac (%s, %s)" % (
+                "Mac hhea" if mac else "larger of Mac hhea and Windows OS/2", today, os.path.basename(pair[0]), os.path.basename(pair[1]))
             print("added", face, tables["fonts"][face]["lineHeight"], "(cloud)")
         with open(TABLES, "w", encoding="utf-8") as fh:
             json.dump(tables, fh, ensure_ascii=True, separators=(",", ":"))  # escaped: no literal dash characters in the file

@@ -62,7 +62,6 @@ MIN_SIZE = {"heading": 10, "body": 9, "label": 8, "fixed": 8}
 CHAR_W = 0.52   # average character width, in ems, for the fit estimate
 LINE_H = 1.2
 SLIDE_MARGIN = 1.03   # width room for decks not at the library's scale (Reviewer, 13 Nov 2026)
-PLAIN_MARGIN = 1.01   # width room at the library's scale: Windows wraps a line that fills its box
 # a theme face without a width table: the widest common face measured is 15%
 # wider than Arial, and lines are set up to 1.5 of the size (Poppins by its own
 # file; Poppins has a table of its own, at its Windows figure of 1.76)
@@ -217,9 +216,8 @@ def lay_out(shapes, page, place, deck_faces, report, label_half_step=False, cont
     # library's own scale (4:3, a band squeezed under a low title) keeps 3%
     # more room, which the Reviewer measured covers what one model leaves out
     plain = all(abs(v - 1) < 0.005 for v in (place.sx, place.sy, place.k))
-    # a line that fills its box to within 1% wraps in PowerPoint on Windows (render of 14 Nov 2026:
-    # two texts with 0.1% to spare took a second line), so it counts as wrapping here too
-    margin, floor, max_raise = (PLAIN_MARGIN if plain else SLIDE_MARGIN), 0, None
+    # (a line that fills its box to within half a percent or a point wraps: layoutfit's own rule now)
+    margin, floor, max_raise = (1.0 if plain else SLIDE_MARGIN), 0, None
     # a face the tables lack, used by this page's text: fitted with room for a
     # face up to 15% wider and taller lines, and its text never raised
     used = {("heading" if r.get("font") == "head" else "body")

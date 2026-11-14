@@ -583,14 +583,14 @@ class LayoutFitParity(unittest.TestCase):
 
     def test_caps_hold(self):
         capped = [v for v in self.vectors if v["id"] in layoutfit.CAPS]
-        self.assertGreaterEqual(len(capped), 7)
+        self.assertEqual(len(capped), len(layoutfit.CAPS))      # every capped page is recorded
         for v in capped:
             cap = layoutfit.CAPS[v["id"]]
             _, r = self.run_page(v, page_id=v["id"])
             self.assertLessEqual(r["size"], max(cap, 0))
-        # a page below zero is left exactly as drawn
-        v = next(v for v in capped if layoutfit.CAPS[v["id"]] < 0)
-        shapes, r = self.run_page(v, page_id=v["id"])
+        # a cap below zero leaves a page exactly as drawn
+        v = next(v for v in self.vectors if v["size"] > 0)
+        shapes, r = self.run_page(v, max_raise=-1)
         self.assertEqual(r, {"changed": [], "size": 0})
         self.assertEqual(shapes, v["input"])
 

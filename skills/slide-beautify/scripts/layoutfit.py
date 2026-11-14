@@ -281,8 +281,19 @@ _WORDS = re.compile("([%s]+)" % JS_SPACE)
 _SPACE = re.compile("^[%s]+$" % JS_SPACE)
 
 
+# A line fits only when it leaves half a percent of its room or one point,
+# whichever is larger (layoutfit.js fitWidth; CEO, 14 Nov 2026)
+WRAP_SPARE = 0.005
+WRAP_SPARE_PT = 1
+
+
+def fit_width(width):
+    return width - max(WRAP_SPARE * width, WRAP_SPARE_PT)
+
+
 def _wrap(text, width, font, size, bold, o):
     """Lines a paragraph's text wraps to: greedy, at spaces, as PowerPoint does."""
+    width = fit_width(width)
     lines = 0
     for para in _BREAK.split(text):
         line = 0
@@ -315,7 +326,8 @@ def text_height(s, o, raw=False):
         text = "".join(js_str(r["t"]) for r in runs)
         lines = 1 if t.get("wrap") is False else _wrap(text, width, font, size, bold, o)
         spacing = p["spacing"] / 100 if p.get("spacing") else 1
-        pts += lines * size * max(o.m.line_height(font), 0 if raw else MIN_LINE) * spacing
+        # never under 1.2 of the size, where a text sits too (layoutfit.js)
+        pts += lines * size * max(o.m.line_height(font), MIN_LINE) * spacing
         pts += (p.get("after") or 0) + (p.get("before") or 0)
     if raw:
         return pts / 72 + ins[1] + ins[3]
@@ -365,7 +377,7 @@ def _ink_spans(s, o):
             continue
         w = o.m.width("".join(js_str(r["t"]) for r in runs), _font(runs, o), _size(runs),
                       all(r.get("b") for r in runs)) / 72 + _indent(p)
-        if w > inner + 0.01 and t.get("wrap") is not False:
+        if w * 72 > fit_width(inner * 72) and t.get("wrap") is not False:
             continue
         x0 = s["x"] + ins[0]
         x1 = s["x"] + s["w"] - ins[2]
