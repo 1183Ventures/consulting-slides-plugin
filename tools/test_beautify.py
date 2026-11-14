@@ -405,6 +405,32 @@ class Beautify(unittest.TestCase):
         title = Presentation(self.out).slides[0].shapes.title
         self.assertLess(title.width, Inches(4))          # the 3.6 in side column, not the top
         self.assertGreater(title.height, Inches(4))
+        self.assertEqual(title.text_frame.paragraphs[0]._p.pPr.get("algn"), "l")
+
+    def test_the_side_title_is_left_aligned_in_a_deck_of_centred_titles(self):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            pages = {p["id"]: p for p in json.load(fh)["pages"]}
+        check_slide_fit.make_deck(self.deck, True, False, 2, ("Georgia", "Arial"))
+        prs = Presentation(self.deck)
+        A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+        P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+        # every title centred: the master's title style, and any layout or master title that says otherwise
+        style = prs.slide_master.element.find(".//" + P + "titleStyle").find(A + "lvl1pPr")
+        style.set("algn", "ctr")
+        for part in [prs.slide_master] + list(prs.slide_layouts):
+            for pPr in part.element.iter(A + "lvl1pPr"):
+                if pPr.get("algn"):
+                    pPr.set("algn", "ctr")
+        prs.save(self.deck)
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            json.dump(check_slide_fit.plan_for([pages["side-title"], pages["situation-complication-resolution"]], 1.0), fh)
+        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = Presentation(self.out)
+        algn = [s.shapes.title.text_frame.paragraphs[0]._p.pPr.get("algn") for s in out.slides]
+        self.assertEqual(algn, ["l", "ctr"])
 
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)

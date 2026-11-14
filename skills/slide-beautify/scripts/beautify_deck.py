@@ -364,7 +364,7 @@ def place_title(prs, slide, title_ph, text, report, frame=None):
     title box. The title is measured with the width tables and steps down
     half a point at a time if it does not fit; a box with no width is
     replaced by the library's title frame. A page with its own title frame
-    (the side-title column) has its title there, top-anchored.
+    (the side-title column) has its title there, top-anchored and left-aligned.
     -> (the title box's bottom, the bottom of its text), EMU."""
     layout, master = slide.slide_layout, slide.slide_layout.slide_master
     lay_sp, mas_sp = _title_ph_xml(layout), _title_ph_xml(master)
@@ -394,7 +394,10 @@ def place_title(prs, slide, title_ph, text, report, frame=None):
             h = min(h, round((2 * size * 1.2 / 72 + 0.1) * E))
         anchor = "t"
     if frame is not None:
+        # the side-title column heads a left-aligned list: its title is left-aligned
+        # there, also in a deck whose titles are centred (CEO, 14 Nov 2026)
         anchor = "t"
+        algn = "l"
     # measured with the width tables in the deck's heading face
     fonts, unknown = deck_fonts(prs)
     face = fonts["heading"]
