@@ -308,7 +308,9 @@ class Beautify(unittest.TestCase):
                 "shapes": [{"kind": "ph", "type": "title", "text": {"paras": [{"runs": [{"t": "A title"}]}]}},
                            box(2.0, "A label that a rule runs through as drawn and wraps to two lines here"),
                            {"kind": "cxn", "x1": 1, "y1": 2.2, "x2": 6, "y2": 2.2, "color": "a4", "weight": 0.75},
-                           box(2.7, "A second text under it"), box(3.4, "A third text under that one")]}
+                           box(2.7, "A second text under it"),
+                           {"kind": "cxn", "x1": 1, "y1": 3.4, "x2": 6, "y2": 3.4, "color": "a4", "weight": 0.75},
+                           box(4.6, "A third text far below")]}
         page["slots"] = BS.slots_of(page)
         cat = os.path.join(self.dir, "cat.json")
         with open(cat, "w", encoding="utf-8") as fh:
@@ -324,6 +326,15 @@ class Beautify(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             rep = json.loads(r.stdout)["rebuilt"][0]
             self.assertEqual(any("run into" in w for w in rep["warnings"]), warned, (warned, rep["warnings"]))
+        # clearing the slot that fails by design frees nothing: a long text elsewhere is still warned
+        ids = [sl["id"] for sl in page["slots"] if sl["role"] not in ("title", "source", "fixed")]
+        words = {k: v for k, v in own.items() if k != ids[0]}
+        words[ids[1]] = (own[ids[1]] + " ") * 24    # too long for the shrink step to save: it runs onto the second rule
+        # (one new failure in place of the cleared one: the count rule of 64e5953 did not warn here)
+        self.write_plan({"pages": [{"slide": 1, "page": page["id"], "title": "A title", "slots": words, "clear": [ids[0]]}]})
+        r = run(BEAUTIFY, self.deck, self.plan, self.out, "--pages", cat)
+        rep = json.loads(r.stdout)["rebuilt"][0]
+        self.assertTrue(any("run into" in w for w in rep["warnings"]), rep["warnings"])
 
     def _round_one_deck(self, path, n=3):
         # a deck as round 1 of the Windows render had it: a 10 x 5.625 slide still typed screen4x3, its

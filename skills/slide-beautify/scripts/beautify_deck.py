@@ -207,7 +207,7 @@ def deck_fonts(prs):
     return fonts, unknown
 
 
-def lay_out(shapes, page, place, deck_faces, report, label_half_step=False, content_top=None):
+def lay_out(shapes, page, place, deck_faces, report, label_half_step=False, content_top=None, page_index=None):
     """layoutfit.py on the filled page, in the page's own inches: text boxes
     fitted to their text, rows and cards spread to the body's bottom, body
     text raised while the page has room (the library's own pass)."""
@@ -242,11 +242,15 @@ def lay_out(shapes, page, place, deck_faces, report, label_half_step=False, cont
     up = rises(drawn, shapes, measure, fonts, content_top)
     # the page check fails a library page that draws a label on a rule or a shape by design, so a
     # page is warned only when it has more failures than the library page laid out with its own words
+    # failures compared by which text and what it meets, in the library page's own numbering: a
+    # page warns on any the library page does not have, so clearing a slot frees nothing
     own = copy.deepcopy(page["shapes"])
     layoutfit.fit_layout(own, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise, safety_add=add)
     base = layoutfit.fit_faults(own, fonts=fonts, measure=measure, safety_add=add)
-    down = (layoutfit.fit_faults(shapes, fonts=fonts, measure=measure, safety_add=add) > base
-            or not words_fit(shapes, measure, fonts))
+    where = page_index if page_index is not None else list(range(len(shapes)))
+    mine = {(where[i], kind, None if j is None else where[j])
+            for i, kind, j in layoutfit.fit_faults(shapes, fonts=fonts, measure=measure, safety_add=add)}
+    down = bool(mine - base) or not words_fit(shapes, measure, fonts)
     r["fits"] = not (up or down)
     if down:
         report["warnings"].append("Texts on this page may run into each other or past the bottom: shorten the longest")
@@ -502,6 +506,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
     # one size per role on the page, written into the page in its own points
     scale = min(place.s, place.sy * place.k)
     slots_of = [slot for _, _, slot, _ in drafts]
+    page_index = [i for i, _, _, _ in drafts]      # each drawn shape's number in the library page
     drawn_at = [place.pt(f[0][1]) if f is not None else None for _, _, _, f in drafts]
 
     def sized(step, keep=frozenset()):
@@ -533,7 +538,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             def finals(lst):
                 return [[r.get("sz") or 12 for p in (x.get("text") or {}).get("paras", []) for r in p.get("runs", [])] for x in lst]
             today = sized(None)
-            judge = lay_out(today, page, place, faces, {"warnings": []}, label_half_step, top)["measure"]
+            judge = lay_out(today, page, place, faces, {"warnings": []}, label_half_step, top, page_index)["measure"]
 
             o_judge = layoutfit._O(judge, faces[0], layoutfit.BODY, None)
 
@@ -577,7 +582,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 keep = set(wraps)
                 for _ in range(6):
                     trial = sized(step, keep)
-                    ok = lay_out(trial, page, place, faces, {"warnings": []}, label_half_step, top)["fits"]
+                    ok = lay_out(trial, page, place, faces, {"warnings": []}, label_half_step, top, page_index)["fits"]
                     grew = {i for i in guarded if lines(trial)[i] > base_lines[i]} - keep
                     if not grew:
                         break
@@ -590,7 +595,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 if ok and not more and all(b >= a - 1e-9 for a, b in pairs) and any(b > a + 1e-9 for a, b in pairs):
                     shapes = sized(step, keep)   # fresh: the pass runs once on what is drawn
                 break
-        lay_out(shapes, page, place, faces, report, label_half_step, top)
+        lay_out(shapes, page, place, faces, report, label_half_step, top, page_index)
         if dump is not None:
             dump.append({"id": page["id"], "title": entry.get("title") or "", "shapes": copy.deepcopy(shapes)})
     # what shrank, as the slide carries it once the pass is done (the fill

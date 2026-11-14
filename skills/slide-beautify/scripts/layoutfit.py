@@ -697,37 +697,40 @@ def _arrange(shapes, o, changed, spread=True):
 # ---- 4. fill ----------------------------------------------------------------
 
 def _faults(shapes, o):
-    """Each failure of the fill's check, one at a time (_fits stops at the first)."""
+    """Each failure of the fill's check, as (text, what it meets, which shape)
+    by index in `shapes` (_fits stops at the first)."""
+    index = {id(x): k for k, x in enumerate(shapes)}
     boxes = [s for s in shapes if is_text_box(s)]
     cards = [s for s in shapes if is_card(s)]
     for s in boxes:
+        i = index[id(s)]
         ts = text_top(s, o)
         tb = ts + text_height(s, o)
         if o.body and s["y"] < o.body["bottom"] and tb > o.body["bottom"] + 0.05:
-            yield 1
+            yield (i, "bottom", None)
         probe = dict(s, h=max(s["h"], 0.01))
         card = next((c for c in cards if inside(probe, c) or (
             s["x"] >= c["x"] - TOL and right(s) <= right(c) + TOL and s["y"] >= c["y"] - TOL and s["y"] < bottom(c))), None)
         if card is not None and tb > bottom(card) + 0.02:
-            yield 1
+            yield (i, "card", index[id(card)])
         for L in shapes:
             if L.get("kind") != "cxn" or abs(L["y1"] - L["y2"]) > 0.02:
                 continue
             lx = {"x": min(L["x1"], L["x2"]), "w": abs(L["x2"] - L["x1"])}
             lx["y"], lx["h"] = 0, 0
             if overlap_x(s, lx) >= 0.2 and ts + 0.02 < L["y1"] < tb - 0.02:
-                yield 1
+                yield (i, "rule", index[id(L)])
         for f in shapes:
             if f.get("kind") != "sp" or not js_truthy(f.get("fill")) or js_truthy(f.get("rot")) or f is s or inside(s, f) or overlap_x(s, f) < 0.2:
                 continue
             if ts + 0.02 < f["y"] < tb - 0.02 and not (s["y"] >= f["y"] - 0.02 and s["y"] < bottom(f)):
-                yield 1
+                yield (i, "fill", index[id(f)])
         for b in boxes:
             if b is s or overlap_x(s, b) < 0.2:
                 continue
             bt = text_top(b, o)
             if min(tb, bt + text_height(b, o, True)) - max(ts, bt) > 0.02:
-                yield 1
+                yield (i, "text", index[id(b)])
 
 
 def _fits(shapes, o):
@@ -1025,6 +1028,7 @@ def page_fits(shapes, fonts=None, measure=None, body=BODY, safety_add=SAFETY_ADD
 
 
 def fit_faults(shapes, fonts=None, measure=None, body=BODY, safety_add=SAFETY_ADD):
-    """How many times a page fails the fill's check (a library page can fail it
-    by design: a label drawn on a rule)."""
-    return sum(_faults(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add)))
+    """Each failure of the fill's check, as (text, what it meets, which shape) by
+    index in `shapes` (a library page can fail it by design: a label drawn on a
+    rule)."""
+    return set(_faults(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add)))
