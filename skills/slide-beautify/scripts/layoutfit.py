@@ -126,7 +126,8 @@ class SlideMeasure(Measure):
 class _O:
     """The pass's options: measure, fonts, body box, cap."""
 
-    def __init__(self, measure, fonts, body, max_raise, safety_add=SAFETY_ADD):
+    def __init__(self, measure, fonts, body, max_raise, safety_add=SAFETY_ADD, margin=True):
+        self.margin = margin
         self.m = measure
         self.fonts = fonts
         self.body = body
@@ -287,13 +288,18 @@ WRAP_SPARE = 0.005
 WRAP_SPARE_PT = 1
 
 
-def fit_width(width):
+def fit_width(width, o=None):
+    """The width a line may fill when sizing its box (no margin when o.margin is False)."""
+    if o is not None and getattr(o, "margin", True) is False:
+        return width
     return width - max(WRAP_SPARE * width, WRAP_SPARE_PT)
 
 
-def _wrap(text, width, font, size, bold, o):
-    """Lines a paragraph's text wraps to: greedy, at spaces, as PowerPoint does."""
-    width = fit_width(width)
+def _wrap(text, width, font, size, bold, o, fit=True):
+    """Lines a paragraph's text wraps to: greedy, at spaces, as PowerPoint does.
+    fit: with the wrap margin (sizing a box); without, the lines as drawn."""
+    if fit:
+        width = fit_width(width, o)
     lines = 0
     for para in _BREAK.split(text):
         line = 0
@@ -346,7 +352,7 @@ def lines_of(s, o):
             lines += 1
             continue
         width = max(room - _indent(p) * 72, 4)
-        lines += _wrap("".join(js_str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o)
+        lines += _wrap("".join(js_str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o, fit=False)
     return lines
 
 
@@ -377,7 +383,7 @@ def _ink_spans(s, o):
             continue
         w = o.m.width("".join(js_str(r["t"]) for r in runs), _font(runs, o), _size(runs),
                       all(r.get("b") for r in runs)) / 72 + _indent(p)
-        if w * 72 > fit_width(inner * 72) and t.get("wrap") is not False:
+        if w > inner + 0.01 and t.get("wrap") is not False:
             continue
         x0 = s["x"] + ins[0]
         x1 = s["x"] + s["w"] - ins[2]
@@ -871,6 +877,25 @@ def _run_sizes(shapes):
 
 def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD,
                label_half_step=False):
+    """layoutfit.js fitLayout: the margin sizes boxes, never the raise. The pass
+    runs as drawn (no margin) to learn the raise, then with the margin, capped
+    at it. -> {"changed": [...], "size": points added}"""
+    kw = dict(fonts=fonts, measure=measure, body=body, page_id=page_id, safety_add=safety_add, label_half_step=label_half_step)
+    as_drawn = _fit_core(copy.deepcopy(shapes), max_raise=max_raise, margin=False, **kw)
+    if isinstance(max_raise, (int, float)) and not isinstance(max_raise, bool):
+        given = max_raise
+    elif page_id is not None and isinstance(CAPS.get(page_id), (int, float)):
+        given = CAPS[page_id]
+    else:
+        given = None
+    if given is not None and given < 0:
+        return _fit_core(shapes, max_raise=max_raise, margin=True, **kw)
+    cap = min(given, as_drawn["size"]) if given is not None else as_drawn["size"]
+    return _fit_core(shapes, max_raise=cap, margin=True, **kw)
+
+
+def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD,
+              label_half_step=False, margin=True):
     """Fits, arranges and fills a page's shapes in place (layoutfit.js).
 
     page_id: the library page's id, for its measured cap (layoutfit-caps.json);
@@ -879,7 +904,7 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
     -> {"changed": [{name, what, from, to}], "size": points added}"""
     # safety_add: the flat room over each text's estimate, in the page's inches (the
     # library's 0.04; the beautifier passes 0.04 slide inches in page inches)
-    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add)
+    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add, margin)
     if isinstance(max_raise, (int, float)) and not isinstance(max_raise, bool):
         o.max_raise = max_raise
     elif page_id is not None and isinstance(CAPS.get(page_id), (int, float)):
