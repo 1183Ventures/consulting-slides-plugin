@@ -102,7 +102,19 @@ def shape_html(sh, th, fonts, tstyle=(42.7, None)):
     body = ""
     if sh.has_text_frame:
         bp = el.find(".//a:bodyPr", NS)
-        anchor = {"ctr": "center", "b": "flex-end"}.get(bp.get("anchor") if bp is not None else "t", "flex-start")
+        raw = bp.get("anchor") if bp is not None else None
+        if raw is None and sh.is_placeholder:
+            # inherited: the layout's placeholder, then the master's
+            try:
+                lay = sh.part.slide_layout.placeholders.get(idx=sh.placeholder_format.idx)
+                for src in (lay, sh.part.slide_layout.slide_master.placeholders.get(idx=sh.placeholder_format.idx)):
+                    b2 = src.element.find(".//a:bodyPr", NS) if src is not None else None
+                    if b2 is not None and b2.get("anchor"):
+                        raw = b2.get("anchor")
+                        break
+            except (AttributeError, KeyError, ValueError):
+                pass
+        anchor = {"ctr": "center", "b": "flex-end"}.get(raw or "t", "flex-start")
         style += ["display:flex", "flex-direction:column", "justify-content:%s" % anchor]
         paras = []
         for p in el.findall(".//a:p", NS):
@@ -126,7 +138,11 @@ def shape_html(sh, th, fonts, tstyle=(42.7, None)):
                 runs.append('<span style="%s">%s</span>' % (st, t))
             if not runs and sh.is_placeholder:
                 continue
-            paras.append('<div style="text-align:%s;line-height:1.15">%s%s</div>' % (algn, bullet, "".join(runs) or "&nbsp;"))
+            # the paragraph's line box takes its first run's size, not the container's (a placeholder's
+            # container carries the master's 44 pt, which drew 24 pt titles low in a tall line)
+            first = next((r.find("a:rPr", NS) for r in p.findall("a:r", NS) if r.find("a:rPr", NS) is not None and r.find("a:rPr", NS).get("sz")), None)
+            psz = ";font-size:%.1fpx" % (int(first.get("sz")) / 100 * 96 / 72) if first is not None else ""
+            paras.append('<div style="text-align:%s;line-height:1.15%s">%s%s</div>' % (algn, psz, bullet, "".join(runs) or "&nbsp;"))
         body = "".join(paras)
         if sh.is_placeholder and not body:
             return ""

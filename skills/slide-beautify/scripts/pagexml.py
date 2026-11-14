@@ -120,24 +120,29 @@ class Place:
     deck's own title when that title ends lower than the page's.
     """
 
-    def __init__(self, slide_w_emu, slide_h_emu, content_top=None, title_bottom_emu=None):
+    def __init__(self, slide_w_emu, slide_h_emu, content_top=None, title_bottom_emu=None, title_text_bottom_emu=None):
         self.sx = slide_w_emu / (CANVAS_W * EMU)
         self.sy = slide_h_emu / (CANVAS_H * EMU)
         self.s = (self.sx * self.sy) ** 0.5
         self.top = content_top or 0.0
         self.k = 1.0   # how much the content band is squeezed down
         self.dy = 0.0
+        self.want = None   # where the content must start, EMU (None: no title above it)
         if content_top is not None and title_bottom_emu is not None:
-            # the content keeps 0.12 in clear of the bottom of the title's
-            # text, as the writer places and measures it (beautify_deck
-            # place_title): a one-line title squeezes nothing, a two-line
-            # title moves the content down as far as its text reaches. (Clearing
-            # the title's box instead squeezed pages under one-line titles,
-            # and the library's own clearance let the side-title page start
-            # under a two-line title: Windows render round 2, 14 Nov 2026.)
-            clear = 0.12
+            # the content clears the title's BOX (the deck's, or the two-line box
+            # of the house rule), so every page of a deck starts by the box, not
+            # by its title's length (CEO, 14 Nov 2026). The clearance is 0.12 in,
+            # or what the page itself keeps under the library's own title box
+            # (LIB_TITLE_BOTTOM) when that is less: pages drawn to start above it
+            # (vertical-steps at 1.3 in) are not squeezed under a box that ends
+            # where the library's does. A page starts lower only when its
+            # title's text runs past the box, and then clears the text by 0.12 in.
+            clear = min(0.12, content_top - LIB_TITLE_BOTTOM)
             want = title_bottom_emu + clear * EMU * self.sy
+            if title_text_bottom_emu is not None and title_text_bottom_emu > title_bottom_emu:
+                want = max(want, title_text_bottom_emu + 0.12 * EMU * self.sy)
             have = content_top * EMU * self.sy
+            self.want = want
             if want > have:
                 bottom = (CANVAS_H - 0.35) * EMU * self.sy
                 self.k = max(0.75, (bottom - want) / max(bottom - have, 1))

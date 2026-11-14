@@ -337,7 +337,20 @@ def _title_style(master, attr, child=None):
     return None if el is None else el.get(attr)
 
 
-def place_title(prs, slide, title_ph, text, report):
+STD_TITLE_FRAME = (0.5, 0.56, 12.33, 0.9)   # in: the library's own top title frame
+
+
+def page_title_frame(page):
+    """The page's own title frame (library inches) when it is not the standard
+    top one: the side-title page's column. None for a standard page."""
+    ph = next((s for s in page["shapes"] if s.get("kind") == "ph" and s.get("type") == "title"), None)
+    if not ph or "w" not in ph:
+        return None
+    box = (ph.get("x", 0), ph.get("y", 0), ph["w"], ph.get("h", 0))
+    return None if all(abs(a - b) < 0.02 for a, b in zip(box, STD_TITLE_FRAME)) else box
+
+
+def place_title(prs, slide, title_ph, text, report, frame=None):
     """The title, as the file will draw it: box, size and alignment resolved
     through slide, layout and master and written on the slide itself, never
     left to PowerPoint's autofit (Windows render, 14 Nov 2026: a blank
@@ -346,13 +359,19 @@ def place_title(prs, slide, title_ph, text, report):
     width) gets 24 pt, in a box two lines tall at the top of the layout's
     title box. The title is measured with the width tables and steps down
     half a point at a time if it does not fit; a box with no width is
-    replaced by the library's title frame. -> the bottom of the title's
-    text, EMU (where the page's content must clear it)."""
+    replaced by the library's title frame. A page with its own title frame
+    (the side-title column) has its title there, top-anchored.
+    -> (the title box's bottom, the bottom of its text), EMU."""
     layout, master = slide.slide_layout, slide.slide_layout.slide_master
     lay_sp, mas_sp = _title_ph_xml(layout), _title_ph_xml(master)
     E = 914400
     k = prs.slide_width / (13.333 * E)
     box = _box_of(lay_sp) or _box_of(mas_sp)
+    if frame is not None:
+        # the page's own title frame (the side-title column), scaled to the slide
+        fx, fy, fw, fh = frame
+        sx, sy = prs.slide_width / (13.333 * E), prs.slide_height / (7.5 * E)
+        box = (round(fx * sx * E), round(fy * sy * E), round(fw * sx * E), round(fh * sy * E))
     if box is None:
         x, y, w, h = LIB_TITLE_BOX
         box = (round(x * k * E), round(y * prs.slide_height / (7.5 * E) * E), round(w * k * E), round(h * prs.slide_height / (7.5 * E) * E))
@@ -367,7 +386,10 @@ def place_title(prs, slide, title_ph, text, report):
     x, y, w, h = box
     if size > HOUSE_TITLE_MAX * k:
         size = round(HOUSE_TITLE * k * 2) / 2
-        h = min(h, round((2 * size * 1.2 / 72 + 0.1) * E))
+        if frame is None:
+            h = min(h, round((2 * size * 1.2 / 72 + 0.1) * E))
+        anchor = "t"
+    if frame is not None:
         anchor = "t"
     # measured with the width tables in the deck's heading face
     fonts, unknown = deck_fonts(prs)
@@ -402,10 +424,11 @@ def place_title(prs, slide, title_ph, text, report):
         para._p.get_or_add_pPr().set("algn", algn)
         for run in para.runs:
             run._r.get_or_add_rPr().set("sz", str(int(round(fitted * 100))))
-    # the bottom of the title's text, where its anchor puts it
-    text_h = min(round(need(fitted) * E), h)
+    # the box's bottom, and the bottom of the title's text where its anchor puts it
+    text_h = round(need(fitted) * E)
     a = anchor or resolved_anchor
-    return y + text_h if a == "t" else y + h if a == "b" else y + (h + text_h) // 2
+    text_bottom = y + text_h if a == "t" else y + h if a == "b" else y + (h + text_h) // 2
+    return y + h, text_bottom
 
 
 class _MeasureRef:
@@ -424,16 +447,21 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             title_ph = ph
         elif t not in KEEP_PH:
             ph.element.getparent().remove(ph.element)
-    title_bottom = None
+    title_bottom = title_text = None
+    frame = page_title_frame(page)
     if title_ph is not None:
-        title_bottom = place_title(prs, slide, title_ph, entry.get("title") or "", report)
+        box_bottom, title_text = place_title(prs, slide, title_ph, entry.get("title") or "", report, frame)
+        # a title in the page's own side frame is beside the content, not above it
+        title_bottom = None if frame is not None else box_bottom
+        if frame is not None:
+            title_text = None
     elif entry.get("title"):
         report["warnings"].append("The layout has no title placeholder; the title was not placed")
 
     content = [s for s in page["shapes"] if s["kind"] != "ph"]
     top = min([s["y"] for s in content if "y" in s] + [min(s["y1"], s["y2"]) for s in content if "y1" in s] or [1.6])
-    place = pagexml.Place(prs.slide_width, prs.slide_height, top, title_bottom)
-    if title_bottom is not None and place.y(top) < title_bottom + 0.05 * 914400 * place.sy:
+    place = pagexml.Place(prs.slide_width, prs.slide_height, top, title_bottom, title_text)
+    if place.want is not None and place.y(top) < place.want - 0.03 * 914400 * place.sy:
         report["warnings"].append("The title runs into the page under it: shorten the title")
 
     slots_by_shape = {s["shape"]: s for s in page["slots"]}

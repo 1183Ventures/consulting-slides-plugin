@@ -381,6 +381,20 @@ class Beautify(unittest.TestCase):
         self.assertIsNotNone(body.find("{http://schemas.openxmlformats.org/drawingml/2006/main}noAutofit"))
         self.assertLessEqual(title.height, Inches(2 * 24 * 1.2 / 72 + 0.1) + 1)
 
+    def test_the_side_title_page_takes_its_own_frame(self):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            side = [p for p in json.load(fh)["pages"] if p["id"] == "side-title"]
+        check_slide_fit.make_deck(self.deck, True, False, 1, ("Georgia", "Arial"))
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            json.dump(check_slide_fit.plan_for(side, 1.0), fh)
+        r = run(BEAUTIFY, self.deck, self.plan, self.out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        title = Presentation(self.out).slides[0].shapes.title
+        self.assertLess(title.width, Inches(4))          # the 3.6 in side column, not the top
+        self.assertGreater(title.height, Inches(4))
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
@@ -493,17 +507,18 @@ class LayoutFitParity(unittest.TestCase):
         self.assertTrue(0 < r["size"] <= 1, r["size"])
         self.assertLessEqual(size["Body text that may grow"], 12)
 
-    def test_content_clears_the_titles_text(self):
+    def test_content_clears_the_titles_box(self):
         import pagexml
         E = 914400
         W, H = int(13.333 * E), int(7.5 * E)
-        # a one-line title's text ends at 1.01 in: a page starting at 1.3 in keeps its scale
-        self.assertEqual(pagexml.Place(W, H, 1.3, int(1.01 * E)).k, 1.0)
-        # a two-line title's text ends at 1.41 in: the page moves under it, 0.12 in clear
-        two = pagexml.Place(W, H, 1.3, int(1.41 * E))
-        self.assertLess(two.k, 1.0)
-        self.assertAlmostEqual(two.dy / E, 1.41 + 0.12 - 1.3, places=3)
-        # a page starting at 1.62 in under text ending at 1.7 in keeps 0.12 in clear, as before
+        # under a box ending where the library's does, a page drawn to start at 1.3 in keeps its scale
+        self.assertEqual(pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.01 * E)).k, 1.0)
+        # every page of a deck starts by the box: a two-line title inside the box changes nothing
+        self.assertEqual(pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.41 * E)).k, 1.0)
+        # a title's text running past its box moves the page under the text, 0.12 in clear
+        past = pagexml.Place(W, H, 1.3, int(1.46 * E), int(1.70 * E))
+        self.assertAlmostEqual(past.dy / E, 1.70 + 0.12 - 1.3, places=3)
+        # a page starting at 1.62 in under a lower box keeps 0.12 in clear of the box
         low = pagexml.Place(W, H, 1.62, int(1.7 * E))
         self.assertAlmostEqual(low.dy / E, 1.7 + 0.12 - 1.62, places=3)
 
