@@ -22,6 +22,7 @@ Standard library only. `Place` maps the page's 13.333 x 7.5 inch canvas onto
 the deck's slide.
 """
 
+import math
 import re
 from xml.sax.saxutils import escape as _esc
 
@@ -162,8 +163,9 @@ class Place:
         return max(7.0, round(size * min(self.s, self.sy * self.k) * 2) / 2)
 
     def spacing(self, points):
-        """Paragraph spacing on the slide: scaled as the text is (no rounding, no floor)."""
-        return points * min(self.s, self.sy * self.k)
+        """Paragraph spacing on the slide: scaled as the text is, rounded down to
+        a half point (PowerPoint's Paragraph box shows 12, not 11.88)."""
+        return math.floor(points * min(self.s, self.sy * self.k) * 2 + 1e-9) / 2
 
     def box(self, x, y, w, h, geom=None):
         """x, y, width, height in EMU; round shapes keep their proportions."""

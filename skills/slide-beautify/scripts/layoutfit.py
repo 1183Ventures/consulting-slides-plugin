@@ -126,11 +126,12 @@ class SlideMeasure(Measure):
 class _O:
     """The pass's options: measure, fonts, body box, cap."""
 
-    def __init__(self, measure, fonts, body, max_raise):
+    def __init__(self, measure, fonts, body, max_raise, safety_add=SAFETY_ADD):
         self.m = measure
         self.fonts = fonts
         self.body = body
         self.max_raise = max_raise
+        self.safety_add = safety_add
 
 
 def to_fixed(x, digits):
@@ -318,7 +319,7 @@ def text_height(s, o, raw=False):
         pts += (p.get("after") or 0) + (p.get("before") or 0)
     if raw:
         return pts / 72 + ins[1] + ins[3]
-    return (pts / 72) * SAFETY + SAFETY_ADD + ins[1] + ins[3]
+    return (pts / 72) * SAFETY + o.safety_add + ins[1] + ins[3]
 
 
 def lines_of(s, o):
@@ -842,14 +843,16 @@ def _run_sizes(shapes):
     return [r.get("sz") or 12 for s in shapes if is_text_box(s) for p in _paras(s) for r in p.get("runs") or []]
 
 
-def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None):
+def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD):
     """Fits, arranges and fills a page's shapes in place (layoutfit.js).
 
     page_id: the library page's id, for its measured cap (layoutfit-caps.json);
     max_raise: points the fill may add at most (overrides the cap); below 0
     leaves the page as drawn.
     -> {"changed": [{name, what, from, to}], "size": points added}"""
-    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None)
+    # safety_add: the flat room over each text's estimate, in the page's inches (the
+    # library's 0.04; the beautifier passes 0.04 slide inches in page inches)
+    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add)
     if isinstance(max_raise, (int, float)) and not isinstance(max_raise, bool):
         o.max_raise = max_raise
     elif page_id is not None and isinstance(CAPS.get(page_id), (int, float)):
@@ -955,7 +958,7 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
     return {"changed": best[2], "size": best[1]}
 
 
-def page_fits(shapes, fonts=None, measure=None, body=BODY):
+def page_fits(shapes, fonts=None, measure=None, body=BODY, safety_add=SAFETY_ADD):
     """No text past the body's bottom, out of its card, onto a rule, into a
     filled shape or into another text (the fill's own check)."""
-    return _fits(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None))
+    return _fits(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add))

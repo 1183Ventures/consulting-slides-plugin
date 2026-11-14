@@ -51,6 +51,9 @@ FACES = {  # common Office theme faces (Reviewer, 13 Nov 2026: decks in other fa
     "Times New Roman": (SUPP + "/Times New Roman.ttf", SUPP + "/Times New Roman Bold.ttf"),
 }
 
+# faces whose line takes the larger of the Mac and Windows figures until the Windows
+# render settles it: Aptos, the default body face (CEO, 14 Nov 2026)
+SAFE_LINE = {"Aptos"}
 CLOUD_DIR = os.path.expanduser("~/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
 CLOUD = {  # face -> folder in Office's cloud font cache
     "Aptos Display": "Aptos Display",   # the heading face of PowerPoint's default theme (Microsoft)
@@ -230,8 +233,10 @@ def main():
             if not (os.path.exists(reg) and os.path.exists(bold)):
                 print("skip", face, "(font files not on this Mac)")
                 continue
-            tables["fonts"][face] = table_for(reg, bold, chars)
-            sources[face] = "widths and line (Mac hhea) read %s from %s and %s" % (today, os.path.basename(reg), os.path.basename(bold))
+            safe = face in SAFE_LINE
+            tables["fonts"][face] = table_for(reg, bold, chars, safe_line=safe)
+            sources[face] = "widths and line (%s) read %s from %s and %s" % (
+                "larger of Mac hhea and Windows OS/2" if safe else "Mac hhea", today, os.path.basename(reg), os.path.basename(bold))
             print("added", face, tables["fonts"][face]["lineHeight"])
         for face in CLOUD:
             pair = cloud_pair(face)

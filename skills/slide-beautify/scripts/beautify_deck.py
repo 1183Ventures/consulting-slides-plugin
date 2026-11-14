@@ -229,14 +229,16 @@ def lay_out(shapes, page, place, deck_faces, report):
                                   "its text was not enlarged; check it in PowerPoint" % " and ".join(missing))
     measure = layoutfit.SlideMeasure(layoutfit.Measure(), place.pt, place.sx, margin, floor)
     drawn = copy.deepcopy(shapes)
-    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise)
+    # the flat 0.04 in of room counts in slide inches, so every slide size keeps the same spare
+    add = layoutfit.SAFETY_ADD / (place.sy * place.k)
+    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise, safety_add=add)
     fitted = sum(1 for c in r["changed"] if c["what"] == "height to its text")
     report["layout"] = (["%d text boxes fitted to their text" % fitted] if fitted else []) + \
         [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
     report["text_up"] = r["size"]
     r["measure"] = measure
     up = rises(drawn, shapes, measure, fonts)
-    down = not (layoutfit.page_fits(shapes, fonts=fonts, measure=measure) and words_fit(shapes, measure, fonts))
+    down = not (layoutfit.page_fits(shapes, fonts=fonts, measure=measure, safety_add=add) and words_fit(shapes, measure, fonts))
     r["fits"] = not (up or down)
     if down:
         report["warnings"].append("Texts on this page may run into each other or past the bottom: shorten the longest")
