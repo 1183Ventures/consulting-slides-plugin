@@ -126,8 +126,9 @@ class SlideMeasure(Measure):
 class _O:
     """The pass's options: measure, fonts, body box, cap."""
 
-    def __init__(self, measure, fonts, body, max_raise, safety_add=SAFETY_ADD, margin=True):
+    def __init__(self, measure, fonts, body, max_raise, safety_add=SAFETY_ADD, margin=True, raw_floor=True):
         self.margin = margin
+        self.raw_floor = raw_floor
         self.m = measure
         self.fonts = fonts
         self.body = body
@@ -295,10 +296,13 @@ def fit_width(width, o=None):
     return width - max(WRAP_SPARE * width, WRAP_SPARE_PT)
 
 
-def _wrap(text, width, font, size, bold, o, fit=True):
+def _wrap(text, width, font, size, bold, o, fit=True, spare=False):
     """Lines a paragraph's text wraps to: greedy, at spaces, as PowerPoint does.
-    fit: with the wrap margin (sizing a box); without, the lines as drawn."""
-    if fit:
+    fit: with the wrap margin (sizing a box); without, the lines as drawn.
+    spare: with the margin whatever o.margin says (the fill's label guard)."""
+    if spare:
+        width = fit_width(width)
+    elif fit:
         width = fit_width(width, o)
     lines = 0
     for para in _BREAK.split(text):
@@ -332,16 +336,19 @@ def text_height(s, o, raw=False):
         text = "".join(js_str(r["t"]) for r in runs)
         lines = 1 if t.get("wrap") is False else _wrap(text, width, font, size, bold, o)
         spacing = p["spacing"] / 100 if p.get("spacing") else 1
-        # never under 1.2 of the size, where a text sits too (layoutfit.js)
-        pts += lines * size * max(o.m.line_height(font), MIN_LINE) * spacing
+        # never under 1.2 of the size, where a text sits too (layoutfit.js); raw_floor
+        # False: main's heights, for the raise the line rule may only lower
+        floor = 0 if raw and getattr(o, "raw_floor", True) is False else MIN_LINE
+        pts += lines * size * max(o.m.line_height(font), floor) * spacing
         pts += (p.get("after") or 0) + (p.get("before") or 0)
     if raw:
         return pts / 72 + ins[1] + ins[3]
     return (pts / 72) * SAFETY + o.safety_add + ins[1] + ins[3]
 
 
-def lines_of(s, o):
-    """Lines the text wraps to, all paragraphs (for the fill's guard)."""
+def lines_of(s, o, spare=False):
+    """Lines the text wraps to, all paragraphs (for the fill's guard); spare: a
+    line fits only inside the wrap margin."""
     t = s.get("text") or {}
     ins = t.get("inset") or DEFAULT_INSET
     room = max((s["w"] - ins[0] - ins[2]) * 72, 4)
@@ -352,7 +359,7 @@ def lines_of(s, o):
             lines += 1
             continue
         width = max(room - _indent(p) * 72, 4)
-        lines += _wrap("".join(js_str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o, fit=False)
+        lines += _wrap("".join(js_str(r["t"]) for r in runs), width, _font(runs, o), _size(runs), _bold(runs), o, fit=False, spare=spare)
     return lines
 
 
@@ -882,9 +889,14 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
                label_half_step=False):
     """layoutfit.js fitLayout: the margin sizes boxes, never the raise. The pass
     runs as drawn (no margin) to learn the raise, then with the margin, capped
-    at it. -> {"changed": [...], "size": points added}"""
+    at it. The line rule may lower the raise, never increase it: the raise is
+    the smaller of the as-drawn pass on main's line heights and with the rule.
+    -> {"changed": [...], "size": points added}"""
     kw = dict(fonts=fonts, measure=measure, body=body, page_id=page_id, safety_add=safety_add, label_half_step=label_half_step)
     as_drawn = _fit_core(copy.deepcopy(shapes), max_raise=max_raise, margin=False, **kw)
+    as_main = _fit_core(copy.deepcopy(shapes), max_raise=max_raise, margin=False, raw_floor=False, **kw)
+    # the capped run holds every text either deciding run held (layoutfit.js)
+    seed = list(dict.fromkeys(list(as_drawn["seed"]) + list(as_main["seed"])))
     if isinstance(max_raise, (int, float)) and not isinstance(max_raise, bool):
         given = max_raise
     elif page_id is not None and isinstance(CAPS.get(page_id), (int, float)):
@@ -892,13 +904,24 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
     else:
         given = None
     if given is not None and given < 0:
-        return _fit_core(shapes, max_raise=max_raise, margin=True, **kw)
-    cap = min(given, as_drawn["size"]) if given is not None else as_drawn["size"]
-    return _fit_core(shapes, max_raise=cap, margin=True, **kw)
+        r = _fit_core(shapes, max_raise=max_raise, margin=True, **kw)
+        return {"changed": r["changed"], "size": r["size"]}
+    drawn = min(as_drawn["size"], as_main["size"])
+    cap = min(given, drawn) if given is not None else drawn
+    r = _fit_core(shapes, max_raise=cap, margin=True, seed=seed, **kw)
+    return {"changed": r["changed"], "size": r["size"]}
 
 
-def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD,
-              label_half_step=False, margin=True):
+def _fit_core(*a, **kw):
+    """-> {"changed", "size", "seed"}: seed, the texts held for getting closer
+    to a shape beside them (indices)."""
+    r = _fit_run(*a, **kw)
+    r.setdefault("seed", [])
+    return r
+
+
+def _fit_run(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD,
+              label_half_step=False, margin=True, raw_floor=True, seed=()):
     """Fits, arranges and fills a page's shapes in place (layoutfit.js).
 
     page_id: the library page's id, for its measured cap (layoutfit-caps.json);
@@ -907,7 +930,7 @@ def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_rai
     -> {"changed": [{name, what, from, to}], "size": points added}"""
     # safety_add: the flat room over each text's estimate, in the page's inches (the
     # library's 0.04; the beautifier passes 0.04 slide inches in page inches)
-    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add, margin)
+    o = _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add, margin, raw_floor)
     if isinstance(max_raise, (int, float)) and not isinstance(max_raise, bool):
         o.max_raise = max_raise
     elif page_id is not None and isinstance(CAPS.get(page_id), (int, float)):
@@ -940,7 +963,12 @@ def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_rai
     kept = [z for z in _run_sizes(shapes) if FILL_TO < z < 20]
     ceiling = min(MAX_FILL, min(kept) - 0.5 if kept else MAX_FILL)
     # labels outside a column of rows may not gain a line
-    base_lines = [lines_of(s, o) if is_text_box(s) and not _in_row_column(s, base) else None for s in base]
+    # nor may a step bring one inside the wrap margin (layoutfit.js)
+    base_lines = [(lines_of(s, o), lines_of(s, o, True)) if is_text_box(s) and not _in_row_column(s, base) else None for s in base]
+
+    def gains(i, x):
+        b = base_lines[i]
+        return b is not None and (lines_of(x, o) > b[0] or lines_of(x, o, True) > b[1])
     # rows lined up as drawn stay lined up
     aligned = []
     for i, a in enumerate(base):
@@ -967,7 +995,7 @@ def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_rai
     best = None
     # a text that would get closer to a shape beside it stays at its size, with
     # its kind (a seed), and the fill runs again: the rest of the page still fills
-    seed = set()
+    seed = set(seed)
     for _round in range(6):
         held, held_sizes = _held_rows(base, seed)
         sizes = sizes_of(held)
@@ -993,7 +1021,7 @@ def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_rai
         while max(sizes) + d <= ceiling + 1e-9 and d <= cap + 1e-9:
             trial = copy.deepcopy(base)
             _raise(trial, d, held)
-            if any(base_lines[i] is not None and lines_of(x, o) > base_lines[i] for i, x in enumerate(trial)):
+            if any(gains(i, x) for i, x in enumerate(trial)):
                 break
             ch = []
             _arrange(trial, o, ch, not fixed)
@@ -1015,10 +1043,10 @@ def _fit_core(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_rai
             break
         seed.update(closer)
     if not best:
-        return {"changed": changed, "size": 0}
+        return {"changed": changed, "size": 0, "seed": sorted(seed)}
     shapes[:] = best[0]
     best[2].append({"name": "page", "what": "body text up to fill the page", "from": 0, "to": best[1]})
-    return {"changed": best[2], "size": best[1]}
+    return {"changed": best[2], "size": best[1], "seed": sorted(seed)}
 
 
 def page_fits(shapes, fonts=None, measure=None, body=BODY, safety_add=SAFETY_ADD):
