@@ -11,6 +11,7 @@ Consulting Slides teaches Claude to write slides the way strategy consultants do
 | **Executive summary** | Writes the one-page summary that leads a deck or memo: the answer first, three to five supporting points with evidence, and the decision or next steps requested. | "Write the exec summary for these findings" |
 | **Slide review** | Checks a deck before it goes out, the way a manager would: every number in a title is on the page, every chart has a unit and a period, every page with figures has a source line, and every table total adds up. Lists leftovers that travel with the file (placeholder text, hidden slides, speaker notes, comments). Reports what to fix; it does not reformat pages. Reads a .pptx with a bundled script. | "Check this deck before I send it" |
 | **Slide style** | Lays out a page in consulting house style: where the title, body, source line and side panel go, rules and column headers, tables built from text boxes, legends, type sizes, theme colors and charts. For decks you build or generate in any tool. | "Lay out this page like a consulting slide" |
+| **Slide beautify** | Rebuilds rough text slides as clean consulting pages: works out what each slide is (a summary, a 2x2, a process, columns, a plan), lays its own words out on the best-matching page from a library of designed layouts in the deck's own fonts and colours, and returns a new .pptx with a list of every change. The content stays the same; the original file is never changed. | "Beautify the slides in this deck" |
 
 The slide writer also knows consulting shorthand (tracker, sticker, ghost deck, dot-dash, mekko, Harvey balls) and common slide types: performance against plan, for-discussion slides, issue trees, approach pages, initiative portfolios, and peer benchmarks. The storyline checker reads decks whose template keeps a short label in the title box and the takeaway just below it.
 
@@ -25,19 +26,20 @@ You don't need to name a skill. Claude picks the right one from your request. In
 - "Turn these four workstream findings into the executive summary page for the board pre-read."
 - "The board pre-read is attached as a .pptx and goes out tonight. Is it ready to send?"
 - "I'm generating our quarterly review deck with python-pptx. Give me the layout for a chart page with three takeaways."
+- "These slides are walls of bullets. Beautify them into proper consulting pages."
 
 ## Where it works
 
-All five skills work in Claude chat (web, desktop, and mobile), in Cowork, and in Claude Code. They are written instructions, so they load wherever skills load.
+All six skills work in Claude chat (web, desktop, and mobile), in Cowork, and in Claude Code. They are written instructions, so they load wherever skills load.
 
-The storyline checker and the slide review can read a .pptx file where Claude can run code: in Claude Code, in Cowork, and in chat with code execution turned on. Anywhere else, paste the slide text instead. In PowerPoint, View > Outline View lists it; in Google Slides, export the deck as plain text from the File menu.
+The storyline checker, the slide review and the slide beautify read a .pptx file where Claude can run code (the slide beautify also needs python-pptx, and writes a new .pptx): in Claude Code, in Cowork, and in chat with code execution turned on. Anywhere else, paste the slide text instead. In PowerPoint, View > Outline View lists it; in Google Slides, export the deck as plain text from the File menu.
 
 The skills use the open Agent Skills format (a folder with a `SKILL.md` file), so they also work in Codex, Gemini CLI, Cursor and other tools that read it. [AGENT-SKILLS.md](AGENT-SKILLS.md) says where each tool looks for them.
 
 ## Data and privacy
 
 - The plugin has no connectors, makes no network calls, and has no telemetry. It stores nothing and sends nothing anywhere.
-- The only code is two scripts, `skills/storyline-checker/scripts/deck_outline.py` and `skills/slide-review/scripts/review_deck.py`. Claude runs them only when you give it a .pptx file. Each reads that one file and prints what it found: the slide titles with a preview of each slide's text, or the review's findings slide by slide. They use only the Python standard library and write nothing to disk.
+- The code is a few scripts that Claude runs only when you give it a .pptx file. `skills/storyline-checker/scripts/deck_outline.py` and `skills/slide-review/scripts/review_deck.py` read that one file and print what they found (the slide titles with a preview of each slide's text, or the review's findings); they use only the Python standard library and write nothing to disk. The slide beautify's scripts (`skills/slide-beautify/scripts/`) use python-pptx: `read_deck.py` prints what is on each slide, and `beautify_deck.py` writes a new .pptx and a report next to it. None of them changes the file you gave.
 - What you paste or attach stays in your conversation with Claude.
 
 ## About the publisher

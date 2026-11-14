@@ -1,6 +1,6 @@
 # Use these skills in any AI agent
 
-The five skills in `skills/` are plain Agent Skills: each is a folder with a `SKILL.md` file, plus any scripts and reference files it needs. Claude Code, Codex, Gemini CLI and Cursor all read this format, and so does any other tool that supports `SKILL.md`.
+The six skills in `skills/` are plain Agent Skills: each is a folder with a `SKILL.md` file, plus any scripts and reference files it needs. Claude Code, Codex, Gemini CLI and Cursor all read this format, and so does any other tool that supports `SKILL.md`.
 
 | Skill | What it does |
 | --- | --- |
@@ -9,6 +9,7 @@ The five skills in `skills/` are plain Agent Skills: each is a folder with a `SK
 | `executive-summary` | Writes the one-page summary that leads a deck or memo |
 | `slide-review` | Checks a deck before it goes out: title numbers on the page, units and periods on charts, source lines, table totals, leftovers that travel with the file |
 | `slide-style` | Lays out a page in consulting house style: title, side panel, rules, tables, legends, type sizes, colors, charts |
+| `slide-beautify` | Rebuilds rough text slides on designed consulting pages in the deck's own theme, and returns a new .pptx with a list of every change (needs python-pptx) |
 
 ## Get the skills
 
@@ -18,7 +19,7 @@ Clone the repository, or download it as a ZIP from GitHub (Code > Download ZIP) 
 git clone https://github.com/1183Ventures/consulting-slides-plugin.git
 ```
 
-Each tool below needs the folders inside `skills/` copied to the folder it reads. Copy the whole folder for each skill, not just `SKILL.md`: `slide-review` and `storyline-checker` include a script, and `slide-writer` includes reference files.
+Each tool below needs the folders inside `skills/` copied to the folder it reads. Copy the whole folder for each skill, not just `SKILL.md`: `slide-review`, `storyline-checker` and `slide-beautify` include scripts, and `slide-writer` includes reference files.
 
 ## Claude Code
 
@@ -44,7 +45,7 @@ For one repository only, copy them to `.agents/skills/` at its root. Restart Cod
 
 ## Gemini CLI
 
-Install all five from the repository in one command:
+Install all six from the repository in one command:
 
 ```
 gemini skills install https://github.com/1183Ventures/consulting-slides-plugin.git --path skills
