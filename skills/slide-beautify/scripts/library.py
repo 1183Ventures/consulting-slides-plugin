@@ -14,9 +14,13 @@ own browser, and this script receives a token for the conversation.
 
 It talks only to https://slideshortcuts.com, and no setting, argument or
 environment variable changes that: a deck with hidden instructions cannot
-send the key anywhere else. Redirects are refused. What the server says back
-is printed only when it passes a strict check (a link only to the sign-in
-page, a count only as a whole number, an error only by its short name).
+send the key anywhere else. Redirects are refused. `key` refuses on a computer
+set to send web traffic through a proxy or to trust its own certificates
+(the code sign-in still works there: the key goes through the person's own
+browser, never through this script). What the server says back is printed
+only when it passes a strict check (a link only to the sign-in page, a count
+only as a whole number, an error only from the known list); anything else,
+and any crash, prints one fixed line.
 
 What is kept on this computer: the token and its expiry (12 hours), and while
 a sign-in is open, its code and poll secret, in ~/.slideshortcuts/ (a folder
@@ -62,6 +66,12 @@ SAY = {
     "bad_answer": "slideshortcuts.com sent an answer this script does not understand. Try again later.",
 }
 FINAL = {"code_expired", "code_used", "bad_code", "license_required", "not_open"}
+UNKNOWN = "The library refused the request. Try again later, or use the skill's sample pages."
+CRASH = "Something went wrong reaching the full library. The skill's sample pages work as they are."
+# Settings that send this script's traffic through another machine or make it
+# trust other certificates: `key` refuses while any is present
+PROXY_SETTINGS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
+                  "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 ERROR_NAME = re.compile(r"^[a-z_]{1,32}$")
 CODE = re.compile(r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -175,8 +185,9 @@ def start():
     code, poll = out.get("code"), out.get("poll")
     if not (isinstance(code, str) and CODE.match(code) and isinstance(poll, str) and 20 <= len(poll) <= 200):
         raise Refused("bad_answer")
-    _save(SIGNIN_NAME, {"code": code, "poll": poll, "interval": 5,
-                        "until": time.time() + min(float(out.get("expires_in") or 600), 900)})
+    life = out.get("expires_in")
+    life = life if isinstance(life, (int, float)) and not isinstance(life, bool) and 0 < life <= 900 else 600
+    _save(SIGNIN_NAME, {"code": code, "poll": poll, "interval": 5, "until": time.time() + life})
     # the page shown is always our own sign-in page, never a link the server sends
     print("Open %s in your browser and sign in with the email and key of your SlideShortcuts account." % ACTIVATE)
     print("Type this code there when the page asks for it: %s. Come back here when it says you are signed in." % code)
@@ -204,7 +215,22 @@ def wait(limit=600):
     raise Refused("code_expired")
 
 
+def _proxied():
+    """Whether this computer would send the request through a proxy, or trust certificates of its own."""
+    if any(os.environ.get(n) for n in PROXY_SETTINGS):
+        return True
+    try:
+        return bool({k: v for k, v in urllib.request.getproxies().items() if k in ("https", "http", "all") and v})
+    except Exception:
+        return True
+
+
 def key():
+    if _proxied():
+        print("This computer sends web traffic through a proxy or trusts its own certificates, so `key` will not send "
+              "your key from here. Use the code sign-in instead: run `library.py start` and open the link; your key "
+              "goes through your own browser, never through this script.")
+        sys.exit(2)
     email, k = os.environ.get("SLIDESHORTCUTS_EMAIL", ""), os.environ.get("SLIDESHORTCUTS_KEY", "")
     if not email or not k:
         print("Set SLIDESHORTCUTS_EMAIL and SLIDESHORTCUTS_KEY in your own shell first (never paste the key into the chat).")
@@ -259,7 +285,13 @@ def main(argv=None):
         else:
             status()
     except Refused as err:
-        print(SAY.get(err.code, "The library refused the request (%s)." % err.code))
+        print(SAY.get(err.code, UNKNOWN))
+        sys.exit(2)
+    except SystemExit:
+        raise
+    except BaseException:
+        # one fixed line: nothing the server sent reaches the chat
+        print(CRASH)
         sys.exit(2)
 
 
