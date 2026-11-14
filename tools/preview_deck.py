@@ -107,7 +107,10 @@ def shape_html(sh, th, fonts, tstyle=(42.7, None)):
             # inherited: the layout's placeholder, then the master's
             try:
                 lay = sh.part.slide_layout.placeholders.get(idx=sh.placeholder_format.idx)
-                for src in (lay, sh.part.slide_layout.slide_master.placeholders.get(idx=sh.placeholder_format.idx)):
+                # a master's placeholders are found by type, not index (python-pptx 1.0)
+                kind = sh.placeholder_format.type
+                mas = next((p for p in sh.part.slide_layout.slide_master.placeholders if p.placeholder_format.type == kind), None)
+                for src in (lay, mas):
                     b2 = src.element.find(".//a:bodyPr", NS) if src is not None else None
                     if b2 is not None and b2.get("anchor"):
                         raw = b2.get("anchor")
