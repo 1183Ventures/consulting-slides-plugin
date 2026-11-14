@@ -3,11 +3,16 @@
 
 Usage:
     python3 tools/build_beautify_sample.py <library dir> [--out skills/slide-beautify/assets/pages.json]
+    python3 tools/build_beautify_sample.py <library dir> --all --out <pages-full.json>
 
 <library dir> holds index.json and pages/*.json: the SlideShortcuts slide
 library as the Google Slides add-on serves it (lavender: Website/gslides/library).
 Only the pages listed in SAMPLE are copied, each with its text slots worked out.
 Davon picks the final 20 before anything ships (CEO, 13 Nov 2026).
+
+--all writes every page the skill can draw (shapes, lines, the title and the
+source line; no groups, tables or pictures): the full catalogue our server
+hands out for a valid SlideShortcuts key.
 
 Not shipped with the skill: a maintainer's tool.
 """
@@ -114,14 +119,24 @@ def slots_of(page):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("library")
+    ap.add_argument("--all", action="store_true")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "skills", "slide-beautify", "assets", "pages.json"))
     a = ap.parse_args()
     found = {}
+    every = []
     for f in sorted(glob.glob(os.path.join(a.library, "pages", "*.json"))):
         d = json.load(open(f, encoding="utf-8"))
         for p in d["pages"]:
             if p["id"] in SAMPLE:
                 found[p["id"]] = (d["section"], p)
+            if drawable(p):
+                every.append((d["section"], p))
+    if a.all:
+        pages = [{"id": p["id"], "name": p["name"], "section": sec,
+                  "fits": SAMPLE.get(p["id"]) or "%s: %s" % (sec, p["name"]),
+                  "slots": slots_of(p), "shapes": p["shapes"]} for sec, p in every]
+        write(a.out, pages)
+        return
     missing = [k for k in SAMPLE if k not in found]
     if missing:
         raise SystemExit("Not in the library: " + ", ".join(missing))
@@ -132,12 +147,23 @@ def main():
             raise SystemExit(pid + ": groups, tables and pictures are not in the sample")
         pages.append({"id": pid, "name": p["name"], "section": section, "fits": fits,
                       "slots": slots_of(p), "shapes": p["shapes"]})
+    write(a.out, pages)
+
+
+def drawable(page):
+    shapes = page.get("shapes") or []
+    kinds = {s["kind"] for s in shapes}
+    phs = {s.get("type") for s in shapes if s["kind"] == "ph"}
+    return kinds <= {"sp", "cxn", "ph"} and "pic" not in phs and any(s["kind"] == "sp" for s in shapes)
+
+
+def write(path, pages):
     out = {"version": 1, "canvas": {"w": 13.333, "h": 7.5}, "source": "SlideShortcuts slide library",
            "pages": pages}
-    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
-    with open(a.out, "w", encoding="utf-8") as fh:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(",", ":"))
-    print("%d pages, %d slots -> %s" % (len(pages), sum(len(p["slots"]) for p in pages), a.out))
+    print("%d pages, %d slots -> %s" % (len(pages), sum(len(p["slots"]) for p in pages), path))
 
 
 if __name__ == "__main__":
