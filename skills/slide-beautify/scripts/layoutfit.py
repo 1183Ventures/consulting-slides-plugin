@@ -784,13 +784,23 @@ def _held_rows(shapes, seed=frozenset()):
         return (r.get("sz") or 12, js_truthy(r.get("b")), _color_key(r.get("color"))) if r else None
 
     seed_kinds = {kind_of(shapes[i]) for i in seed} - {None}
+    by_kind = []
     for s, i in items:
         if i < 0 or not _raisable(s) or kind_of(s) not in seed_kinds:
             continue
+        if i not in held and i not in seed:
+            by_kind.append((s, i))
         held.add(i)
         if kind_of(s)[0] not in sizes:
             sizes.append(kind_of(s)[0])
     held.update(seed)
+    # a text held only for its kind is let go where it heads text of its size that is free to grow
+    for s, i in by_kind:
+        sz = kind_of(s)[0]
+        if any(j >= 0 and b is not s and _raisable(b) and j not in held and kind_of(b) and kind_of(b)[0] == sz
+               and abs(b["x"] - s["x"]) < TOL and b["y"] >= bottom(s) - 0.05 and b["y"] - bottom(s) <= 0.8
+               for b, j in items):
+            held.discard(i)
     # a text on a table drawn as a group is held with the table
     plain = [(s, i) for s, i in items if i >= 0 and _raisable(s) and _lead(s)]
     tables = []
