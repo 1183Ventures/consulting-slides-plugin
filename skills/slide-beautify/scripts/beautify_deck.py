@@ -232,12 +232,35 @@ def lay_out(shapes, page, place, deck_faces, report):
     report["layout"] = (["%d text boxes fitted to their text" % fitted] if fitted else []) + \
         [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
     report["text_up"] = r["size"]
-    if not layoutfit.page_fits(shapes, fonts=fonts, measure=measure):
+    r["measure"] = measure
+    r["fits"] = layoutfit.page_fits(shapes, fonts=fonts, measure=measure) and words_fit(shapes, measure, fonts)
+    if not r["fits"]:
         report["warnings"].append("Texts on this page may run into each other or past the bottom: shorten the longest")
     return r
 
 
-def build_slide(prs, layout, entry, page, report, fit=True):
+def words_fit(shapes, measure, fonts):
+    """No single word wider than its text box (a long figure, a name)."""
+    for s in shapes:
+        if not layoutfit.is_text_box(s) or s["text"].get("wrap") is False:
+            continue
+        ins = s["text"].get("inset") or layoutfit.DEFAULT_INSET
+        room = (s["w"] - ins[0] - ins[2]) * 72
+        for p in s["text"].get("paras", []):
+            runs = [r for r in p.get("runs", []) if r.get("t") is not None]
+            if not runs:
+                continue
+            face = fonts["heading"] if any(r.get("font") == "head" for r in runs) else fonts["body"]
+            size = next((r["sz"] for r in runs if r.get("sz")), 12)
+            bold = all(r.get("b") for r in runs)
+            width = room - ((p.get("level") or 0) * 0.2 + (0.17 if p.get("bullet") else 0)) * 72
+            for word in "".join(str(r["t"]) for r in runs).split():
+                if measure.width(word, face, size, bold) > width + 0.5:
+                    return False
+    return True
+
+
+def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dump=None):
     slide = prs.slides.add_slide(layout)
     title_ph = None
     for ph in list(slide.placeholders):
@@ -293,21 +316,58 @@ def build_slide(prs, layout, entry, page, report, fit=True):
 
     # one size per role on the page, written into the page in its own points
     scale = min(place.s, place.sy * place.k)
-    shapes, slots_of, drawn_at = [], [], []
-    for i, s, slot, fitted in drafts:
-        s = copy.deepcopy(s)
-        drawn_at.append(place.pt(fitted[0][1]) if fitted is not None else None)
-        if fitted is not None:
-            size = sizes[fitted[0]]
-            if size < place.pt(fitted[0][1]):
-                for p in (s.get("text") or {}).get("paras", []):
-                    for r in p.get("runs", []):
-                        r["sz"] = size / scale
-        shapes.append(s)
-        slots_of.append(slot)
+    slots_of = [slot for _, _, slot, _ in drafts]
+    drawn_at = [place.pt(f[0][1]) if f is not None else None for _, _, _, f in drafts]
+
+    def sized(step):
+        """The page with each text at its shrink-first size; with a step (fit
+        first), plain text boxes start from the page's own size and give up
+        half a point a step, never below their shrink-first size."""
+        out = []
+        for i, s, slot, fitted in drafts:
+            s = copy.deepcopy(s)
+            if fitted is not None:
+                own, size = place.pt(fitted[0][1]), sizes[fitted[0]]
+                if step is not None and layoutfit.is_text_box(s):
+                    size = max(size, own - 0.5 * step)
+                if size < own:
+                    for p in (s.get("text") or {}).get("paras", []):
+                        for r in p.get("runs", []):
+                            r["sz"] = size / scale
+            out.append(s)
+        return out
+
     # then the library's layout pass: boxes fitted, the page spread and filled
+    shapes = sized(None)
     if fit:
-        lay_out(shapes, page, place, deck_fonts(prs), report)
+        faces = deck_fonts(prs)
+        if fit_first:
+            # the pass at the page's own sizes first; shrink only what it cannot hold
+            steps = max([int(round((d - sizes[f[0]]) * 2)) for d, (_, _, _, f) in zip(drawn_at, drafts) if f is not None] + [0])
+            def finals(lst):
+                return [[r.get("sz") or 12 for p in (x.get("text") or {}).get("paras", []) for r in p.get("runs", [])] for x in lst]
+            today = sized(None)
+            judge = lay_out(today, page, place, faces, {"warnings": []})["measure"]
+
+            def lines(lst):
+                # lines of each big text (18 pt and up: a figure, a header), which may not gain one
+                o = layoutfit._O(judge, faces[0], layoutfit.BODY, None)
+                return [layoutfit.lines_of(x, o) if layoutfit.is_text_box(x) and max(
+                    (r.get("sz") or 12 for p in x["text"].get("paras", []) for r in p.get("runs", [])), default=0) >= 18 / scale
+                    else 0 for x in lst]
+            for step in range(steps + 1):
+                trial = sized(step)
+                if not lay_out(trial, page, place, faces, {"warnings": []})["fits"] and step < steps:
+                    continue
+                # kept only where it is a plain gain: no text smaller than today, one larger
+                pairs = [(a, b) for xa, xb in zip(finals(today), finals(trial)) for a, b in zip(xa, xb)]
+                more = any(b > a for a, b in zip(lines(today), lines(trial)))
+                if not more and all(b >= a - 1e-9 for a, b in pairs) and any(b > a + 1e-9 for a, b in pairs):
+                    shapes = sized(step)   # fresh: the pass runs once on what is drawn
+                break
+        lay_out(shapes, page, place, faces, report)
+        if dump is not None:
+            dump.append({"id": page["id"], "title": entry.get("title") or "", "shapes": copy.deepcopy(shapes)})
     # what shrank, as the slide carries it once the pass is done (the fill
     # may have given some of it back)
     for s, slot, own in zip(shapes, slots_of, drawn_at):
@@ -369,6 +429,8 @@ def main():
     ap.add_argument("--report")
     ap.add_argument("--keep-originals", action="store_true")
     ap.add_argument("--no-fit", action="store_true", help="draw the pages as the library drew them, without the layout pass")
+    ap.add_argument("--fit-first", action="store_true", help="EXPERIMENT (off by default): run the layout pass at the page's own sizes and shrink only what it cannot hold")
+    ap.add_argument("--dump-shapes", help="write each rebuilt page's final shapes (page inches) to this JSON file, for the gallery renderer")
     ap.add_argument("--pages", default=DEFAULT_PAGES, help="the page catalogue (default: the skill's sample)")
     a = ap.parse_args()
     if os.path.abspath(a.deck) == os.path.abspath(a.out):
@@ -395,13 +457,14 @@ def main():
 
     sld_ids = prs.slides._sldIdLst
     reports, built = [], []
+    dumped = [] if a.dump_shapes else None
     # every new slide first: part names are handed out by count, so no
     # slide may be dropped until all are made
     for e in entries:
         rep = {"slide": e["slide"], "page": e["page"], "filled": [], "kept": [], "cleared": [],
                "shrunk": [], "layout": [], "text_up": 0, "warnings": [], "source": None}
         orig = originals[e["slide"] - 1]
-        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit)
+        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit, fit_first=a.fit_first, dump=dumped)
         rep["notes"] = "kept" if copy_notes(orig, new) else None
         built.append((orig, sld_ids[-1], rep))
         reports.append(rep)
@@ -418,6 +481,9 @@ def main():
             rep["original"] = "replaced"
 
     prs.save(a.out)
+    if a.dump_shapes:
+        with open(a.dump_shapes, "w", encoding="utf-8") as fh:
+            json.dump({"slides": dumped}, fh, ensure_ascii=True)
     out = {"deck": os.path.basename(a.deck), "out": os.path.basename(a.out), "rebuilt": reports,
            "unchanged": [n for n in range(1, len(originals) + 1) if n not in seen]}
     text = json.dumps(out, ensure_ascii=False, indent=1)

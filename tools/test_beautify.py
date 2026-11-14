@@ -219,6 +219,34 @@ class Beautify(unittest.TestCase):
         self.assertGreater(res["boxes"], 100)
         self.assertEqual(res["taller"], 0, res["where"])
 
+    def test_fit_first_experiment_only_ever_gains(self):
+        # --fit-first (off by default): no text ends smaller than the default run, every fitted box holds its text
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_slide_fit
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            pages = json.load(fh)["pages"]
+        check_slide_fit.make_deck(self.deck, True, False, len(pages), ("Georgia", "Arial"))
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            json.dump(check_slide_fit.plan_for(pages, 1.8), fh)
+        dumps = {}
+        for name, extra in (("default", ()), ("first", ("--fit-first",))):
+            path = os.path.join(self.dir, name + ".json")
+            r = run(BEAUTIFY, self.deck, self.plan, self.out, "--dump-shapes", path, *extra)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(path, encoding="utf-8") as fh:
+                dumps[name] = json.load(fh)["slides"]
+            if extra:
+                res = check_slide_fit.check(self.out, layoutfit.Measure())
+                self.assertEqual(res["taller"], 0, res["where"])
+        gained = 0
+        for a, b in zip(dumps["default"], dumps["first"]):
+            for sa, sb in zip(a["shapes"], b["shapes"]):
+                for pa, pb in zip((sa.get("text") or {}).get("paras", []), (sb.get("text") or {}).get("paras", [])):
+                    for ra, rb in zip(pa.get("runs", []), pb.get("runs", [])):
+                        self.assertGreaterEqual(rb.get("sz") or 12, (ra.get("sz") or 12) - 1e-9, a["id"])
+                        gained += (rb.get("sz") or 12) > (ra.get("sz") or 12) + 1e-9
+        self.assertGreater(gained, 0)
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
