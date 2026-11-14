@@ -30,7 +30,8 @@ def theme(prs):
             out = {}
             for el in root.find(".//a:clrScheme", NS):
                 c = el[0]
-                out[etree.QName(el).localname] = c.get("val") if c.get("val") and len(c.get("val")) == 6 else (c.get("lastClr") or "000000")
+                sys_clr = etree.QName(c).localname == "sysClr"
+                out[etree.QName(el).localname] = (c.get("lastClr") if sys_clr else c.get("val")) or "000000"
             out.update({"tx1": out.get("dk1"), "bg1": out.get("lt1"), "tx2": out.get("dk2"), "bg2": out.get("lt2")})
             fonts = {k: root.find(".//a:%s/a:latin" % k, NS).get("typeface") for k in ("majorFont", "minorFont")}
             return out, fonts
