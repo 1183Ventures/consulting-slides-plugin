@@ -297,6 +297,34 @@ class Beautify(unittest.TestCase):
             for a, b in zip(base, rep):
                 self.assertLessEqual(len(b["warnings"]), len(a["warnings"]), (a["page"], b["warnings"]))
 
+    def test_a_design_the_check_fails_is_not_warned_at_its_own_words(self):
+        # a library page drawing a label across a rule fails the fill's check by design: no warning with
+        # its own words, a warning once longer words make it worse
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import build_beautify_sample as BS
+        box = lambda y, t: {"kind": "sp", "geom": "rect", "x": 1, "y": y, "w": 5, "h": 0.4, "fill": None, "line": None,
+                            "text": {"anchor": "t", "inset": [0, 0, 0, 0], "paras": [{"runs": [{"sz": 12, "t": t}]}]}}
+        page = {"id": "design-on-a-rule", "name": "Label on a rule", "section": "Test", "fits": "a test",
+                "shapes": [{"kind": "ph", "type": "title", "text": {"paras": [{"runs": [{"t": "A title"}]}]}},
+                           box(2.0, "A label that a rule runs through as drawn and wraps to two lines here"),
+                           {"kind": "cxn", "x1": 1, "y1": 2.2, "x2": 6, "y2": 2.2, "color": "a4", "weight": 0.75},
+                           box(2.7, "A second text under it"), box(3.4, "A third text under that one")]}
+        page["slots"] = BS.slots_of(page)
+        cat = os.path.join(self.dir, "cat.json")
+        with open(cat, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "canvas": {"w": 13.333, "h": 7.5}, "pages": [page]}, fh)
+        own = {sl["id"]: sl["sample"] for sl in page["slots"] if sl["role"] not in ("title", "source", "fixed")}
+        for words, warned in ((own, False), ({k: (v + " ") * 6 for k, v in own.items()}, True)):
+            prs = Presentation()
+            prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+            prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = "T"
+            prs.save(self.deck)
+            self.write_plan({"pages": [{"slide": 1, "page": page["id"], "title": "A title", "slots": words}]})
+            r = run(BEAUTIFY, self.deck, self.plan, self.out, "--pages", cat)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            rep = json.loads(r.stdout)["rebuilt"][0]
+            self.assertEqual(any("run into" in w for w in rep["warnings"]), warned, (warned, rep["warnings"]))
+
     def test_long_text_shrinks_evenly(self):
         make_deck(self.deck)
         plan = plan_for()
@@ -528,6 +556,112 @@ class LayoutFitParity(unittest.TestCase):
         self.assertEqual(layoutfit.to_fixed(1.005, 2), "1.00")
         self.assertEqual(layoutfit.to_fixed(-0.125, 2), "-0.13")
         self.assertEqual(layoutfit.to_fixed(2.5, 0), "3")
+
+
+LIBRARY = os.path.join(ROOT, "library.py")
+
+
+class FakeGate:
+    """The gate's protocol (lavender netlify/lib/beautify-gate.mjs), in memory."""
+
+    def __init__(self, mode="on"):
+        import http.server
+        import threading
+        self.mode, self.codes, self.tokens, self.seen = mode, {}, set(), []
+        gate = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                gate.seen.append((body, self.headers.get("Authorization")))
+                status, out = gate.answer(body, self.headers.get("Authorization") or "")
+                data = json.dumps(out).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = "http://127.0.0.1:%d/" % self.server.server_port
+
+    def answer(self, b, auth):
+        if self.mode != "on":
+            return 503, {"ok": False, "error": "not_open"}
+        a = b.get("action")
+        if a == "start":
+            self.codes["K7QD-M2PX"] = {"poll": "secret", "state": "pending"}
+            return 200, {"ok": True, "code": "K7QD-M2PX", "poll": "secret", "url": "https://x/activate/?code=K7QD-M2PX", "expires_in": 600, "interval": 1}
+        if a == "poll":
+            c = self.codes.get(b.get("code"))
+            if not c or c["poll"] != b.get("poll"):
+                return 404, {"ok": False, "error": "code_expired"}
+            if c["state"] == "pending":
+                return 200, {"ok": True, "state": "pending"}
+            self.tokens.add("tok-1")
+            return 200, {"ok": True, "state": "approved", "token": "tok-1", "expires_in": 43200}
+        if a == "token":
+            if b.get("key") != "GOOD-KEY":
+                return 403, {"ok": False, "error": "license_required"}
+            self.tokens.add("tok-2")
+            return 200, {"ok": True, "token": "tok-2", "expires_in": 43200}
+        if a == "pages":
+            if auth.replace("Bearer ", "") not in self.tokens:
+                return 401, {"ok": False, "error": "sign_in_required"}
+            return 200, {"ok": True, "version": 1, "canvas": {"w": 13.333, "h": 7.5}, "pages": [{"id": "p1"}, {"id": "p2"}], "remaining": 19}
+        return 400, {"ok": False, "error": "unknown_action"}
+
+
+class Library(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+
+    def lib(self, gate, *args, extra=None):
+        env = dict(os.environ, SLIDESHORTCUTS_API=gate.url, SLIDESHORTCUTS_HOME=self.home, **(extra or {}))
+        return subprocess.run([sys.executable, LIBRARY] + list(args), capture_output=True, text=True, env=env, timeout=60)
+
+    def test_a_closed_gate_says_so(self):
+        r = self.lib(FakeGate("off"), "start")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("not open yet", r.stdout)
+
+    def test_sign_in_then_pages(self):
+        gate = FakeGate()
+        r = self.lib(gate, "start")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("K7QD-M2PX", r.stdout)
+        r = self.lib(gate, "pages", "--out", os.path.join(self.home, "x.json"))
+        self.assertIn("Sign in first", r.stdout)
+        gate.codes["K7QD-M2PX"]["state"] = "approved"     # the person signs in on the web page
+        r = self.lib(gate, "wait", "--limit", "20")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        token_file = os.path.join(self.home, "beautify-token.json")
+        self.assertEqual(oct(os.stat(token_file).st_mode & 0o777), "0o600")
+        out = os.path.join(self.home, "pages-full.json")
+        r = self.lib(gate, "pages", "--out", out)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with open(out, encoding="utf-8") as fh:
+            self.assertEqual(len(json.load(fh)["pages"]), 2)
+        self.assertEqual(gate.seen[-1][1], "Bearer tok-1")
+        self.assertIn("Signed in until", self.lib(gate, "status").stdout)
+
+    def test_key_from_the_environment_never_lands_on_disk(self):
+        gate = FakeGate()
+        r = self.lib(gate, "key", extra={"SLIDESHORTCUTS_EMAIL": "a@b.co", "SLIDESHORTCUTS_KEY": "GOOD-KEY"})
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertNotIn("GOOD-KEY", r.stdout)
+        for name in os.listdir(self.home):
+            with open(os.path.join(self.home, name), encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertNotIn("GOOD-KEY", text)
+            self.assertNotIn("a@b.co", text)
+        r = self.lib(gate, "key", extra={"SLIDESHORTCUTS_EMAIL": "a@b.co", "SLIDESHORTCUTS_KEY": "BAD"})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("not accepted", r.stdout)
 
 
 if __name__ == "__main__":

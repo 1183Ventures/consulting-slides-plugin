@@ -154,8 +154,8 @@ def read_slide(slide, n):
     return out
 
 
-def catalogue():
-    with open(PAGES, encoding="utf-8") as fh:
+def catalogue(path=PAGES):
+    with open(path, encoding="utf-8") as fh:
         pages = json.load(fh)["pages"]
     return [{"id": p["id"], "name": p["name"], "fits": p["fits"],
              "slots": [{k: s[k] for k in ("id", "role", "sample", "max_chars", "bullets", "paras") if k in s}
@@ -167,13 +167,14 @@ def main():
     ap.add_argument("deck")
     ap.add_argument("--slides")
     ap.add_argument("--pages", action="store_true")
+    ap.add_argument("--catalogue", default=PAGES, help="the page catalogue --pages prints (default: the skill's sample; the full library from library.py)")
     a = ap.parse_args()
     prs = Presentation(a.deck)
     nums = slide_list(a.slides, len(prs.slides))
     out = {"file": os.path.basename(a.deck), "slide_size_in": [inches(prs.slide_width), inches(prs.slide_height)],
            "theme": theme_of(prs), "slides": [read_slide(prs.slides[n - 1], n) for n in nums]}
     if a.pages:
-        out["pages"] = catalogue()
+        out["pages"] = catalogue(a.catalogue)
     json.dump(out, sys.stdout, ensure_ascii=False, indent=1)
     sys.stdout.write("\n")
 

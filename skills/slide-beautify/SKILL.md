@@ -96,3 +96,13 @@ End with anything the user should check by eye, and any suggested message titles
 ## The pages
 
 `assets/pages.json` holds a sample of the SlideShortcuts slide library: text-led consulting pages (summaries, matrices, processes, columns, lists, plans). The full library of more than 500 pages comes with a SlideShortcuts subscription.
+
+## The full library (a SlideShortcuts key)
+
+The skill ships with 26 sample pages. A person with a SlideShortcuts key can open the full library (about 280 pages) for 12 hours. Their key never goes in the chat:
+
+1. Run `python3 scripts/library.py start` and show the person the link and code it prints. They open it in their own browser and sign in there with their email and key.
+2. When they say they have signed in, run `python3 scripts/library.py wait`.
+3. Run `python3 scripts/library.py pages --out pages-full.json`, then read and beautify with `--pages pages-full.json` (`read_deck.py DECK --pages --catalogue pages-full.json` lists them).
+
+In Claude Code, a person can instead set SLIDESHORTCUTS_EMAIL and SLIDESHORTCUTS_KEY in their own shell and run `python3 scripts/library.py key`. If the script says the library is not open, or the key was not accepted, tell the person in its words and carry on with the sample pages. Never ask for a key in the chat.

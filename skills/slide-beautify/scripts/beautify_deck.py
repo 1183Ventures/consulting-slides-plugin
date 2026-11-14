@@ -239,7 +239,13 @@ def lay_out(shapes, page, place, deck_faces, report, label_half_step=False):
     report["text_up"] = r["size"]
     r["measure"] = measure
     up = rises(drawn, shapes, measure, fonts)
-    down = not (layoutfit.page_fits(shapes, fonts=fonts, measure=measure, safety_add=add) and words_fit(shapes, measure, fonts))
+    # the page check fails a library page that draws a label on a rule or a shape by design, so a
+    # page is warned only when it has more failures than the library page laid out with its own words
+    own = copy.deepcopy(page["shapes"])
+    layoutfit.fit_layout(own, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise, safety_add=add)
+    base = layoutfit.fit_faults(own, fonts=fonts, measure=measure, safety_add=add)
+    down = (layoutfit.fit_faults(shapes, fonts=fonts, measure=measure, safety_add=add) > base
+            or not words_fit(shapes, measure, fonts))
     r["fits"] = not (up or down)
     if down:
         report["warnings"].append("Texts on this page may run into each other or past the bottom: shorten the longest")

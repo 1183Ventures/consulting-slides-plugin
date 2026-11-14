@@ -678,38 +678,42 @@ def _arrange(shapes, o, changed, spread=True):
 
 # ---- 4. fill ----------------------------------------------------------------
 
-def _fits(shapes, o):
+def _faults(shapes, o):
+    """Each failure of the fill's check, one at a time (_fits stops at the first)."""
     boxes = [s for s in shapes if is_text_box(s)]
     cards = [s for s in shapes if is_card(s)]
     for s in boxes:
         ts = text_top(s, o)
         tb = ts + text_height(s, o)
         if o.body and s["y"] < o.body["bottom"] and tb > o.body["bottom"] + 0.05:
-            return False
+            yield 1
         probe = dict(s, h=max(s["h"], 0.01))
         card = next((c for c in cards if inside(probe, c) or (
             s["x"] >= c["x"] - TOL and right(s) <= right(c) + TOL and s["y"] >= c["y"] - TOL and s["y"] < bottom(c))), None)
         if card is not None and tb > bottom(card) + 0.02:
-            return False
+            yield 1
         for L in shapes:
             if L.get("kind") != "cxn" or abs(L["y1"] - L["y2"]) > 0.02:
                 continue
             lx = {"x": min(L["x1"], L["x2"]), "w": abs(L["x2"] - L["x1"])}
             lx["y"], lx["h"] = 0, 0
             if overlap_x(s, lx) >= 0.2 and ts + 0.02 < L["y1"] < tb - 0.02:
-                return False
+                yield 1
         for f in shapes:
             if f.get("kind") != "sp" or not js_truthy(f.get("fill")) or js_truthy(f.get("rot")) or f is s or inside(s, f) or overlap_x(s, f) < 0.2:
                 continue
             if ts + 0.02 < f["y"] < tb - 0.02 and not (s["y"] >= f["y"] - 0.02 and s["y"] < bottom(f)):
-                return False
+                yield 1
         for b in boxes:
             if b is s or overlap_x(s, b) < 0.2:
                 continue
             bt = text_top(b, o)
             if min(tb, bt + text_height(b, o, True)) - max(ts, bt) > 0.02:
-                return False
-    return True
+                yield 1
+
+
+def _fits(shapes, o):
+    return next(_faults(shapes, o), None) is None
 
 
 def _raisable(s):
@@ -971,3 +975,9 @@ def page_fits(shapes, fonts=None, measure=None, body=BODY, safety_add=SAFETY_ADD
     """No text past the body's bottom, out of its card, onto a rule, into a
     filled shape or into another text (the fill's own check)."""
     return _fits(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add))
+
+
+def fit_faults(shapes, fonts=None, measure=None, body=BODY, safety_add=SAFETY_ADD):
+    """How many times a page fails the fill's check (a library page can fail it
+    by design: a label drawn on a rule)."""
+    return sum(_faults(shapes, _O(measure or Measure(), fonts or DEFAULT_FONTS, body, None, safety_add)))
