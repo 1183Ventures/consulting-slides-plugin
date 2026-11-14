@@ -1,6 +1,7 @@
 {
  "about": "Points layoutfit.js may add to a page's body text at most, measured in the export preview by tools/library-overflow.mjs. Pages not listed: no cap.",
  "caps": {
+  "lib-hierarchy-bands-3": 2,
   "lib-hierarchy-org-4level": 0.5,
   "lib-house-fromto": 0.5,
   "lib-house-twoplans": -1,
@@ -8,5 +9,8 @@
   "lib-people-profile-skills": 0.5,
   "lib-steps-folded-rows-4": 1,
   "matrix-2x2": 0
+ },
+ "manual": {
+  "lib-hierarchy-bands-3": "CEO, 14 Nov 2026: held at +2, the size the Windows render confirmed (13 pt); kept by library-overflow.mjs --write"
  }
 }
