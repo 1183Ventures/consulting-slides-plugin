@@ -493,15 +493,18 @@ class LayoutFitParity(unittest.TestCase):
         self.assertTrue(0 < r["size"] <= 1, r["size"])
         self.assertLessEqual(size["Body text that may grow"], 12)
 
-    def test_a_title_where_the_librarys_ends_squeezes_nothing(self):
+    def test_content_clears_the_titles_text(self):
         import pagexml
         E = 914400
-        lib_title = int(1.46 * E)
-        # a page whose column heads start at 1.3 in (above the library's title box end) keeps its scale
-        self.assertEqual(pagexml.Place(int(13.333 * E), int(7.5 * E), 1.3, lib_title).k, 1.0)
-        # a page starting at 1.62 in still keeps 0.12 in clear of a lower title, as before
-        low = pagexml.Place(int(13.333 * E), int(7.5 * E), 1.62, int(1.7 * E))
-        self.assertLess(low.k, 1.0)
+        W, H = int(13.333 * E), int(7.5 * E)
+        # a one-line title's text ends at 1.01 in: a page starting at 1.3 in keeps its scale
+        self.assertEqual(pagexml.Place(W, H, 1.3, int(1.01 * E)).k, 1.0)
+        # a two-line title's text ends at 1.41 in: the page moves under it, 0.12 in clear
+        two = pagexml.Place(W, H, 1.3, int(1.41 * E))
+        self.assertLess(two.k, 1.0)
+        self.assertAlmostEqual(two.dy / E, 1.41 + 0.12 - 1.3, places=3)
+        # a page starting at 1.62 in under text ending at 1.7 in keeps 0.12 in clear, as before
+        low = pagexml.Place(W, H, 1.62, int(1.7 * E))
         self.assertAlmostEqual(low.dy / E, 1.7 + 0.12 - 1.62, places=3)
 
     def test_rounded_shapes_keep_their_corners(self):

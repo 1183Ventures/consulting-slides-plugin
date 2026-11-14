@@ -128,15 +128,14 @@ class Place:
         self.k = 1.0   # how much the content band is squeezed down
         self.dy = 0.0
         if content_top is not None and title_bottom_emu is not None:
-            # the content keeps 0.12 in clear of the deck's title box, or the
-            # clearance the page itself keeps under the library's own title
-            # box (LIB_TITLE_BOTTOM) when that is less. A page changes wherever
-            # the deck's title ends less than that clearance above the page's
-            # first shape, not only under a title lower than the library's:
-            # on a deck whose title ends at 1.46 in, side-title, vertical-steps
-            # and matrix-2x2 change (Reviewer, 14 Nov 2026: 41 of 364 slides,
-            # none wrongly)
-            clear = min(0.12, content_top - LIB_TITLE_BOTTOM)
+            # the content keeps 0.12 in clear of the bottom of the title's
+            # text, as the writer places and measures it (beautify_deck
+            # place_title): a one-line title squeezes nothing, a two-line
+            # title moves the content down as far as its text reaches. (Clearing
+            # the title's box instead squeezed pages under one-line titles,
+            # and the library's own clearance let the side-title page start
+            # under a two-line title: Windows render round 2, 14 Nov 2026.)
+            clear = 0.12
             want = title_bottom_emu + clear * EMU * self.sy
             have = content_top * EMU * self.sy
             if want > have:

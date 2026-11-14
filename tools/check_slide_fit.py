@@ -162,6 +162,18 @@ def title_faults(prs, faces, m):
         need = lines * size * max(1.2, m.line_height(face)) / 72 + ins_tb
         if need > box[3] / EMU + 0.01:
             out.append("slide %d: the title needs %.2f in at %g pt (%d lines) in a %.2f in box" % (n, need, size, lines, box[3] / EMU))
+        # where its text sits (the anchor through slide, layout, master): past the slide's top, or onto the page
+        anchor = next((b.get("anchor") for b in (bp, ref.find("p:txBody/a:bodyPr", NS) if ref is not None else None,
+                                                 mas.find("p:txBody/a:bodyPr", NS) if mas is not None else None)
+                       if b is not None and b.get("anchor")), "t")
+        y0, hh = box[1] / EMU, box[3] / EMU
+        top = y0 + (hh - need) / 2 if anchor == "ctr" else y0 + hh - need if anchor == "b" else y0
+        if top < -0.01:
+            out.append("slide %d: the title runs %.2f in past the slide's top" % (n, -top))
+        below = [sh.top / EMU for sh in slide.shapes if not sh.is_placeholder and sh.top is not None and sh.top / EMU >= y0 - 0.01
+                 and sh.left is not None and sh.left < box[0] + box[2] and sh.left + sh.width > box[0]]
+        if below and top + need > min(below) + 0.01:
+            out.append("slide %d: the title reaches the page under it (%.2f in onto it)" % (n, top + need - min(below)))
     return out
 
 

@@ -208,7 +208,7 @@ def deck_fonts(prs):
     return fonts, unknown
 
 
-def lay_out(shapes, page, place, deck_faces, report, label_half_step=False):
+def lay_out(shapes, page, place, deck_faces, report, label_half_step=False, content_top=None):
     """layoutfit.py on the filled page, in the page's own inches: text boxes
     fitted to their text, rows and cards spread to the body's bottom, body
     text raised while the page has room (the library's own pass)."""
@@ -241,7 +241,7 @@ def lay_out(shapes, page, place, deck_faces, report, label_half_step=False):
         [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
     report["text_up"] = r["size"]
     r["measure"] = measure
-    up = rises(drawn, shapes, measure, fonts)
+    up = rises(drawn, shapes, measure, fonts, content_top)
     # the page check fails a library page that draws a label on a rule or a shape by design, so a
     # page is warned only when it has more failures than the library page laid out with its own words
     own = copy.deepcopy(page["shapes"])
@@ -257,7 +257,7 @@ def lay_out(shapes, page, place, deck_faces, report, label_half_step=False):
     return r
 
 
-def rises(drawn, shapes, measure, fonts):
+def rises(drawn, shapes, measure, fonts, content_top=None):
     """A text that starts above both the body's top and the box the page drew
     for it (a box anchored at its foot, its text growing up into the title band). The page
     check otherwise looks only down (Reviewer, 14 Nov 2026: big-numbers at
@@ -267,7 +267,8 @@ def rises(drawn, shapes, measure, fonts):
         if not (layoutfit.is_text_box(before) and layoutfit.is_text_box(after)):
             continue
         # the box as the page drew it: long words can already overflow it upward
-        limit = min(before["y"], layoutfit.BODY["top"])
+        # nor above where the page's content starts (under the deck's title once placed)
+        limit = min(before["y"], layoutfit.BODY["top"] if content_top is None else max(content_top, 0))
         if layoutfit.text_top(after, o) < limit - 0.02:
             return True
     return False
@@ -347,7 +348,8 @@ def place_title(prs, slide, title_ph, text, report):
     width) gets 24 pt, in a box two lines tall at the top of the layout's
     title box. The title is measured with the width tables and steps down
     half a point at a time if it does not fit; a box with no width is
-    replaced by the library's title frame. -> the title box's bottom, EMU."""
+    replaced by the library's title frame. -> the bottom of the title's
+    text, EMU (where the page's content must clear it)."""
     layout, master = slide.slide_layout, slide.slide_layout.slide_master
     lay_sp, mas_sp = _title_ph_xml(layout), _title_ph_xml(master)
     E = 914400
@@ -361,6 +363,9 @@ def place_title(prs, slide, title_ph, text, report):
     size = int(sz) / 100 if sz else 44.0
     algn = _lvl1(lay_sp, "algn") or _lvl1(mas_sp, "algn") or _title_style(master, "algn") or "l"
     anchor = None
+    resolved_anchor = next((sp.find(".//" + A + "bodyPr").get("anchor") for sp in (lay_sp, mas_sp)
+                            if sp is not None and sp.find(".//" + A + "bodyPr") is not None
+                            and sp.find(".//" + A + "bodyPr").get("anchor")), "t")
     x, y, w, h = box
     if size > HOUSE_TITLE_MAX * k:
         size = round(HOUSE_TITLE * k * 2) / 2
@@ -399,7 +404,10 @@ def place_title(prs, slide, title_ph, text, report):
         para._p.get_or_add_pPr().set("algn", algn)
         for run in para.runs:
             run._r.get_or_add_rPr().set("sz", str(int(round(fitted * 100))))
-    return y + h
+    # the bottom of the title's text, where its anchor puts it
+    text_h = min(round(need(fitted) * E), h)
+    a = anchor or resolved_anchor
+    return y + text_h if a == "t" else y + h if a == "b" else y + (h + text_h) // 2
 
 
 class _MeasureRef:
@@ -427,6 +435,8 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
     content = [s for s in page["shapes"] if s["kind"] != "ph"]
     top = min([s["y"] for s in content if "y" in s] + [min(s["y1"], s["y2"]) for s in content if "y1" in s] or [1.6])
     place = pagexml.Place(prs.slide_width, prs.slide_height, top, title_bottom)
+    if title_bottom is not None and place.y(top) < title_bottom + 0.05 * 914400 * place.sy:
+        report["warnings"].append("The title runs into the page under it: shorten the title")
 
     slots_by_shape = {s["shape"]: s for s in page["slots"]}
     values = entry.get("slots") or {}
@@ -497,7 +507,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             def finals(lst):
                 return [[r.get("sz") or 12 for p in (x.get("text") or {}).get("paras", []) for r in p.get("runs", [])] for x in lst]
             today = sized(None)
-            judge = lay_out(today, page, place, faces, {"warnings": []}, label_half_step)["measure"]
+            judge = lay_out(today, page, place, faces, {"warnings": []}, label_half_step, top)["measure"]
 
             o_judge = layoutfit._O(judge, faces[0], layoutfit.BODY, None)
 
@@ -541,7 +551,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 keep = set(wraps)
                 for _ in range(6):
                     trial = sized(step, keep)
-                    ok = lay_out(trial, page, place, faces, {"warnings": []}, label_half_step)["fits"]
+                    ok = lay_out(trial, page, place, faces, {"warnings": []}, label_half_step, top)["fits"]
                     grew = {i for i in guarded if lines(trial)[i] > base_lines[i]} - keep
                     if not grew:
                         break
@@ -554,7 +564,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 if ok and not more and all(b >= a - 1e-9 for a, b in pairs) and any(b > a + 1e-9 for a, b in pairs):
                     shapes = sized(step, keep)   # fresh: the pass runs once on what is drawn
                 break
-        lay_out(shapes, page, place, faces, report, label_half_step)
+        lay_out(shapes, page, place, faces, report, label_half_step, top)
         if dump is not None:
             dump.append({"id": page["id"], "title": entry.get("title") or "", "shapes": copy.deepcopy(shapes)})
     # what shrank, as the slide carries it once the pass is done (the fill
