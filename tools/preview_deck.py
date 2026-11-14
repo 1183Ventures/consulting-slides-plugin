@@ -65,7 +65,16 @@ def color(el, th):
     return "rgba(%d,%d,%d,%.2f)" % (r * 255, g * 255, b * 255, a)
 
 
-def shape_html(sh, th, fonts):
+def title_style(prs, th):
+    """The master's title size (px) and colour, for titles that inherit them."""
+    ts = prs.slide_masters[0].element.find(".//p:titleStyle/a:lvl1pPr/a:defRPr", NS)
+    if ts is None:
+        return 32 * 96 / 72, None
+    sz = int(ts.get("sz")) / 100 if ts.get("sz") else 32
+    return sz * 96 / 72, color(ts.find("a:solidFill", NS), th)
+
+
+def shape_html(sh, th, fonts, tstyle=(42.7, None)):
     el = sh.element
     x, y = (sh.left or 0) * EMU_PX, (sh.top or 0) * EMU_PX
     w, h = (sh.width or 0) * EMU_PX, (sh.height or 0) * EMU_PX
@@ -107,8 +116,9 @@ def shape_html(sh, th, fonts):
                 sz = int(rpr.get("sz")) / 100 if rpr is not None and rpr.get("sz") else 18
                 col = color(rpr.find("a:solidFill", NS), th) if rpr is not None else None
                 lat = rpr.find("a:latin", NS) if rpr is not None else None
-                font = fonts.get("majorFont") if lat is not None and lat.get("typeface") == "+mj-lt" else fonts.get("minorFont")
-                st = "font-size:%.1fpx;font-family:'%s'" % (sz * 96 / 72, font)
+                head = (lat is not None and lat.get("typeface") == "+mj-lt") or (lat is None and sh.is_placeholder)
+                font = fonts.get("majorFont") if head else fonts.get("minorFont")
+                st = ("font-family:'%s'" % font) if sh.is_placeholder and not (rpr is not None and rpr.get("sz")) else "font-size:%.1fpx;font-family:'%s'" % (sz * 96 / 72, font)
                 if rpr is not None and rpr.get("b") == "1":
                     st += ";font-weight:700"
                 if col:
@@ -121,7 +131,9 @@ def shape_html(sh, th, fonts):
         if sh.is_placeholder and not body:
             return ""
         if sh.is_placeholder:
-            style.append("font-size:%.1fpx;font-family:'%s'" % (32 * 96 / 72, fonts.get("majorFont")))
+            style.append("font-size:%.1fpx;font-family:'%s'" % (tstyle[0], fonts.get("majorFont")))
+            if tstyle[1]:
+                style.append("color:%s" % tstyle[1])
     return '<div class="sh" style="%s">%s</div>' % (";".join(style), body)
 
 
@@ -133,6 +145,7 @@ def main():
     a = ap.parse_args()
     prs = Presentation(a.deck)
     th, fonts = theme(prs)
+    tstyle = title_style(prs, th)
     want = set(int(x) for x in a.slides.split(",")) if a.slides else None
     W, H = prs.slide_width * EMU_PX, prs.slide_height * EMU_PX
     parts = ["<!doctype html><meta charset=utf-8><title>Preview</title><style>body{background:#888;margin:0;padding:16px;font-family:sans-serif}"
@@ -143,7 +156,7 @@ def main():
             continue
         parts.append('<h2>Slide %d: %s</h2><div class="slide" style="width:%.0fpx;height:%.0fpx">' % (i, html.escape(slide.slide_layout.name), W, H))
         for sh in slide.shapes:
-            parts.append(shape_html(sh, th, fonts))
+            parts.append(shape_html(sh, th, fonts, tstyle))
         parts.append("</div>")
     open(a.out, "w", encoding="utf-8").write("".join(parts))
     print(a.out)
