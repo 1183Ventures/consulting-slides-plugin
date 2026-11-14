@@ -138,6 +138,12 @@ def to_fixed(x, digits):
     return str(Decimal(x).quantize(q, rounding=ROUND_HALF_UP))
 
 
+def round_half_up(x):
+    """JS Math.round: halves go up (toward +infinity)."""
+    import math
+    return math.floor(x + 0.5)
+
+
 def _num(x, digits):
     return float(to_fixed(x, digits))
 
@@ -677,10 +683,55 @@ def _fits(shapes, o):
     return True
 
 
-def _raise(shapes, d):
-    for s in shapes:
-        # labels in diagrams and charts keep their size
-        if not is_text_box(s) or s["w"] < NARROW:
+def _raisable(s):
+    return is_text_box(s) and s["w"] >= NARROW
+
+
+def _held_rows(shapes):
+    """One row, one size: texts drawn side by side at one size, weight and
+    colour end at one size. Where the raise must skip one of them (a narrow
+    label, text in a coloured shape), the others are held too.
+    -> (indices of the shapes to hold, the held rows' sizes)"""
+    items = []
+
+    def walk(lst, top):
+        for i, s in enumerate(lst):
+            if js_truthy(s.get("children")):
+                walk(s["children"], False)
+            else:
+                items.append((s, i if top else -1))
+
+    walk(shapes, True)
+    rows = {}
+    for s, i in items:
+        paras = _paras(s)
+        runs = (paras[0].get("runs") or []) if paras else []
+        if not runs or not has_text(s):
+            continue
+        r = runs[0]
+        sz = r.get("sz") or 12
+        if sz < FILL_FROM or sz > FILL_TO:
+            continue
+        # a shape without a place (a placeholder) is NaN in JS: they share one key
+        y = s.get("y")
+        c = r.get("color")
+        c = "" if not js_truthy(c) else c if isinstance(c, str) else "[object Object]" if isinstance(c, dict) else js_str(c)
+        k = ("NaN" if not isinstance(y, (int, float)) else round_half_up(y * 50), sz, js_truthy(r.get("b")), c)
+        rows.setdefault(k, []).append((s, i))
+    held, sizes = set(), []
+    for k, row in rows.items():
+        up = [i for s, i in row if i >= 0 and _raisable(s)]
+        if not up or len(up) == len(row):
+            continue
+        held.update(up)
+        sizes.append(k[1])
+    return held, sizes
+
+
+def _raise(shapes, d, held=frozenset()):
+    for i, s in enumerate(shapes):
+        # labels in diagrams and charts keep their size; a held row keeps its size
+        if not _raisable(s) or i in held:
             continue
         for p in _paras(s):
             for r in p.get("runs") or []:
@@ -722,7 +773,10 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
         return {"changed": ch, "size": 0}
     if not o.body:
         return {"changed": changed, "size": 0}
-    sizes = [z for z in _run_sizes(shapes) if FILL_FROM <= z <= FILL_TO]
+    held, held_sizes = _held_rows(base)
+    sizes = [r.get("sz") or 12 for i, s in enumerate(shapes) if is_text_box(s) and i not in held
+             for p in _paras(s) for r in p.get("runs") or []]
+    sizes = [z for z in sizes if FILL_FROM <= z <= FILL_TO]
     if not sizes:
         return {"changed": changed, "size": 0}
     # body text stays half a point under the smallest text the fill leaves alone
@@ -754,11 +808,16 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
     columns = [(idx, span_of(base, idx)) for idx in col_idx.values() if len(idx) >= 3]
     base_sideways = sideways_hits(base, o)
     cap = o.max_raise if o.max_raise is not None else INF
+    # text drawn smaller than a held row grows at most to that row's size
+    for h in held_sizes:
+        for t in sizes:
+            if t < h:
+                cap = min(cap, h - t)
     best = None
     d = 0.5
     while max(sizes) + d <= ceiling + 1e-9 and d <= cap + 1e-9:
         trial = copy.deepcopy(base)
-        _raise(trial, d)
+        _raise(trial, d, held)
         if any(base_lines[i] is not None and lines_of(s, o) > base_lines[i] for i, s in enumerate(trial)):
             break
         ch = []

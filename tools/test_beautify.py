@@ -318,6 +318,19 @@ class LayoutFitParity(unittest.TestCase):
                 self.assertIsNone(first_difference(rounded(shapes), v["expect"]))
                 self.assertEqual(r["size"], v["size"])
 
+    def test_a_row_with_a_skipped_text_is_held(self):
+        # as layoutfit.test.mjs: one row, one size, and smaller text stops at the held row's size
+        def box(x, y, w, sz, t):
+            return {"kind": "sp", "geom": "rect", "x": x, "y": y, "w": w, "h": 0.3, "fill": None, "line": None, "name": t,
+                    "text": {"anchor": "t", "inset": [0, 0, 0, 0], "paras": [{"runs": [{"sz": sz, "t": t}]}]}}
+        shapes = [box(0.5, 1.8, 0.5, 12, "#"), box(1.2, 1.8, 3, 12, "Header one"), box(4.4, 1.8, 3, 12, "Header two"),
+                  box(0.5, 2.6, 6, 11, "Body text that may grow"), box(0.5, 3.4, 6, 11, "More body text that may grow")]
+        r = layoutfit.fit_layout(shapes, measure=self.measure)
+        size = {s["name"]: s["text"]["paras"][0]["runs"][0]["sz"] for s in shapes}
+        self.assertEqual((size["#"], size["Header one"], size["Header two"]), (12, 12, 12))
+        self.assertTrue(0 < r["size"] <= 1, r["size"])
+        self.assertLessEqual(size["Body text that may grow"], 12)
+
     def test_comparer_tells_missing_from_null(self):
         self.assertIsNotNone(first_difference({"a": None}, {}))
         self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))
