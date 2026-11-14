@@ -359,6 +359,17 @@ class LayoutFitParity(unittest.TestCase):
         self.assertTrue(0 < r["size"] <= 1, r["size"])
         self.assertLessEqual(size["Body text that may grow"], 12)
 
+    def test_a_title_where_the_librarys_ends_squeezes_nothing(self):
+        import pagexml
+        E = 914400
+        lib_title = int(1.46 * E)
+        # a page whose column heads start at 1.3 in (above the library's title box end) keeps its scale
+        self.assertEqual(pagexml.Place(int(13.333 * E), int(7.5 * E), 1.3, lib_title).k, 1.0)
+        # a page starting at 1.62 in still keeps 0.12 in clear of a lower title, as before
+        low = pagexml.Place(int(13.333 * E), int(7.5 * E), 1.62, int(1.7 * E))
+        self.assertLess(low.k, 1.0)
+        self.assertAlmostEqual(low.dy / E, 1.7 + 0.12 - 1.62, places=3)
+
     def test_comparer_tells_missing_from_null(self):
         self.assertIsNotNone(first_difference({"a": None}, {}))
         self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))

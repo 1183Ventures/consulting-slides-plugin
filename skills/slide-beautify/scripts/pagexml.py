@@ -107,6 +107,9 @@ def line_xml(line, scale=1.0):
 ROUND = ("ellipse", "triangle", "diamond", "chevron", "homePlate", "rightArrow")
 
 
+LIB_TITLE_BOTTOM = 1.46   # inches: the library's title box ends here (frame.js, 16:9: 0.56 + 0.9)
+
+
 class Place:
     """The page's canvas (13.333 x 7.5 in) on the deck's slide.
 
@@ -124,7 +127,13 @@ class Place:
         self.k = 1.0   # how much the content band is squeezed down
         self.dy = 0.0
         if content_top is not None and title_bottom_emu is not None:
-            want = title_bottom_emu + 0.12 * EMU * self.sy
+            # the content keeps 0.12 in clear of the deck's title box, or the
+            # clearance the page itself keeps under the library's own title
+            # box (LIB_TITLE_BOTTOM) when that is less: a page whose column
+            # heads start above it is never squeezed under a title that ends
+            # where the library's does
+            clear = min(0.12, content_top - LIB_TITLE_BOTTOM)
+            want = title_bottom_emu + clear * EMU * self.sy
             have = content_top * EMU * self.sy
             if want > have:
                 bottom = (CANVAS_H - 0.35) * EMU * self.sy
