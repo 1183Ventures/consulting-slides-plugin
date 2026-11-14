@@ -222,8 +222,8 @@ class Beautify(unittest.TestCase):
             self.assertGreater(res["boxes"], 100)
             self.assertEqual(res["taller"], 0, (size, res["where"]))
 
-    def test_fit_first_experiment_only_ever_gains(self):
-        # --fit-first (off by default): no text ends smaller than the default run, every fitted box holds its text
+    def test_fit_first_only_ever_gains(self):
+        # fit first (the default since 14 Nov 2026): no text ends smaller than with the off switch, every fitted box holds its text
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import check_slide_fit
         with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
@@ -232,13 +232,13 @@ class Beautify(unittest.TestCase):
         with open(self.plan, "w", encoding="utf-8") as fh:
             json.dump(check_slide_fit.plan_for(pages, 1.8), fh)
         dumps = {}
-        for name, extra in (("default", ()), ("first", ("--fit-first",))):
+        for name, extra in (("default", ("--no-fit-first",)), ("first", ()), ("asked", ("--fit-first",))):
             path = os.path.join(self.dir, name + ".json")
             r = run(BEAUTIFY, self.deck, self.plan, self.out, "--dump-shapes", path, *extra)
             self.assertEqual(r.returncode, 0, r.stderr)
             with open(path, encoding="utf-8") as fh:
                 dumps[name] = json.load(fh)["slides"]
-            if extra:
+            if name == "first":
                 res = check_slide_fit.check(self.out, layoutfit.Measure())
                 self.assertEqual(res["taller"], 0, res["where"])
         gained = 0
@@ -249,6 +249,18 @@ class Beautify(unittest.TestCase):
                         self.assertGreaterEqual(rb.get("sz") or 12, (ra.get("sz") or 12) - 1e-9, a["id"])
                         gained += (rb.get("sz") or 12) > (ra.get("sz") or 12) + 1e-9
         self.assertGreater(gained, 0)
+        # the old flag still runs, and asks for what is now the default
+        self.assertEqual(dumps["asked"], dumps["first"])
+
+    def test_big_is_judged_on_the_size_the_library_drew(self):
+        # a headline the library drew at 18 pt or more stays guarded when the shrink step took it under 18
+        sys.path.insert(0, ROOT)
+        import beautify_deck
+        self.assertEqual(beautify_deck.BIG_PT, 18)
+        with open(os.path.join(ROOT, "beautify_deck.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("x = drawn[i]", src)
+        self.assertNotIn(">= 18 / scale", src)
 
     def test_a_text_growing_into_the_title_is_warned(self):
         # big-numbers at 1.4 times its words: a figure anchored at its foot grows up past the body's top
@@ -293,7 +305,7 @@ class Beautify(unittest.TestCase):
                     self.assertEqual(len(sizes), 1, (faces, sl["id"], key, sizes))
             # a big text that already wraps never grows: big-numbers warns no more than it does by default
             rep = json.loads(r.stdout)["rebuilt"]
-            r2 = run(BEAUTIFY, self.deck, self.plan, self.out)
+            r2 = run(BEAUTIFY, self.deck, self.plan, self.out, "--no-fit-first")
             base = json.loads(r2.stdout)["rebuilt"]
             for a, b in zip(base, rep):
                 self.assertLessEqual(len(b["warnings"]), len(a["warnings"]), (a["page"], b["warnings"]))

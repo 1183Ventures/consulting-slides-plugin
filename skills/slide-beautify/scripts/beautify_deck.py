@@ -445,7 +445,11 @@ class _MeasureRef:
         self.m = m
 
 
-def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dump=None, label_half_step=False):
+# Fit first: a text the library drew at this size or larger is "big" (guarded)
+BIG_PT = 18
+
+
+def build_slide(prs, layout, entry, page, report, fit=True, fit_first=True, dump=None, label_half_step=False):
     slide = prs.slides.add_slide(layout)
     title_ph = None
     for ph in list(slide.placeholders):
@@ -548,8 +552,12 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             def lines(lst):
                 return [layoutfit.lines_of(x, o_judge) if layoutfit.is_text_box(x) else 0 for x in lst]
 
-            def big(x):
-                return max((r.get("sz") or 12 for p in x["text"].get("paras", []) for r in p.get("runs", [])), default=0) >= 18 / scale
+            drawn = [s for _, s, _, _ in drafts]
+
+            def big(i):
+                # big as the library drew it (18 pt and up on the library page), not as shrunk
+                x = drawn[i]
+                return max((r.get("sz") or 12 for p in (x.get("text") or {}).get("paras", []) for r in p.get("runs", [])), default=0) >= BIG_PT
 
             def on_fill(i, lst):
                 # a text box whose middle sits on a filled shape (a card, a band): its box is fixed
@@ -569,8 +577,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 r = ((x.get("text") or {}).get("paras") or [{}])[0].get("runs") or [{}]
                 return ((slot or {}).get("role"), r[0].get("sz") or 12, bool(r[0].get("b")), r[0].get("color") or "")
 
-            drawn = [s for _, s, _, _ in drafts]
-            guarded = [i for i, x in enumerate(today) if layoutfit.is_text_box(x) and (big(x) or on_fill(i, today))]
+            guarded = [i for i, x in enumerate(today) if layoutfit.is_text_box(x) and (big(i) or on_fill(i, today))]
             base_lines = lines(today)
 
             def with_peers(idx):
@@ -579,7 +586,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 return set(idx) | {j for j, x in enumerate(drawn) if layoutfit.is_text_box(x) and (row_key(x) in rows or kind_key(j) in kinds)}
 
             # a big text that already wraps today never grows (Reviewer: "$24M $24M" rose into the title)
-            wraps = with_peers({i for i in guarded if big(today[i]) and base_lines[i] > 1}) if guarded else set()
+            wraps = with_peers({i for i in guarded if big(i) and base_lines[i] > 1}) if guarded else set()
             for step in range(steps + 1):
                 # a guarded text that would gain a line stays at today's size, with its row and kind
                 keep = set(wraps)
@@ -662,7 +669,8 @@ def main():
     ap.add_argument("--report")
     ap.add_argument("--keep-originals", action="store_true")
     ap.add_argument("--no-fit", action="store_true", help="draw the pages as the library drew them, without the layout pass")
-    ap.add_argument("--fit-first", action="store_true", help="EXPERIMENT (off by default): run the layout pass at the page's own sizes and shrink only what it cannot hold")
+    ap.add_argument("--fit-first", action="store_true", help="the default since 14 Nov 2026 (kept so older commands still run)")
+    ap.add_argument("--no-fit-first", action="store_true", help="OFF SWITCH, kept for one release: shrink first, then the layout pass (the behaviour before 14 Nov 2026)")
     ap.add_argument("--label-half-step", action="store_true", help="OPTION (off by default): a smaller label keeps at least half of its drawn step under the larger text above it")
     ap.add_argument("--dump-shapes", help="write each rebuilt page's final shapes (page inches) to this JSON file, for the gallery renderer")
     ap.add_argument("--pages", default=DEFAULT_PAGES, help="the page catalogue (default: the skill's sample)")
@@ -698,7 +706,7 @@ def main():
         rep = {"slide": e["slide"], "page": e["page"], "filled": [], "kept": [], "cleared": [],
                "shrunk": [], "layout": [], "text_up": 0, "warnings": [], "source": None}
         orig = originals[e["slide"] - 1]
-        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit, fit_first=a.fit_first, dump=dumped, label_half_step=a.label_half_step)
+        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit, fit_first=not a.no_fit_first, dump=dumped, label_half_step=a.label_half_step)
         rep["notes"] = "kept" if copy_notes(orig, new) else None
         built.append((orig, sld_ids[-1], rep))
         reports.append(rep)
