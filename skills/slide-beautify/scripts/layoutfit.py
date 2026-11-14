@@ -843,7 +843,8 @@ def _run_sizes(shapes):
     return [r.get("sz") or 12 for s in shapes if is_text_box(s) for p in _paras(s) for r in p.get("runs") or []]
 
 
-def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD):
+def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_raise=None, safety_add=SAFETY_ADD,
+               label_half_step=False):
     """Fits, arranges and fills a page's shapes in place (layoutfit.js).
 
     page_id: the library page's id, for its measured cap (layoutfit-caps.json);
@@ -921,6 +922,14 @@ def fit_layout(shapes, fonts=None, measure=None, body=BODY, page_id=None, max_ra
         best = None
         closer = None
         cap = o.max_raise if o.max_raise is not None else INF
+        # OPTION (off by default; not in layoutfit.js): a smaller label keeps at
+        # least half of its drawn step under the text the fill leaves alone
+        # above it (11 under 14 stops at 12.5), so the label's role stays seen
+        if label_half_step and kept:
+            for t in sizes:
+                above = [k for k in kept if k > t]
+                if above:
+                    cap = min(cap, (min(above) - t) / 2)
         # text drawn smaller than a held row grows at most to that row's size
         for h in held_sizes:
             for t in sizes:

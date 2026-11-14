@@ -207,7 +207,7 @@ def deck_fonts(prs):
     return fonts, unknown
 
 
-def lay_out(shapes, page, place, deck_faces, report):
+def lay_out(shapes, page, place, deck_faces, report, label_half_step=False):
     """layoutfit.py on the filled page, in the page's own inches: text boxes
     fitted to their text, rows and cards spread to the body's bottom, body
     text raised while the page has room (the library's own pass)."""
@@ -231,7 +231,8 @@ def lay_out(shapes, page, place, deck_faces, report):
     drawn = copy.deepcopy(shapes)
     # the flat 0.04 in of room counts in slide inches, so every slide size keeps the same spare
     add = layoutfit.SAFETY_ADD / (place.sy * place.k)
-    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise, safety_add=add)
+    r = layoutfit.fit_layout(shapes, fonts=fonts, measure=measure, page_id=page["id"], max_raise=max_raise, safety_add=add,
+                             label_half_step=label_half_step)
     fitted = sum(1 for c in r["changed"] if c["what"] == "height to its text")
     report["layout"] = (["%d text boxes fitted to their text" % fitted] if fitted else []) + \
         [c["what"] for c in r["changed"] if c["what"] not in ("height to its text", "body text up to fill the page")]
@@ -284,7 +285,7 @@ def words_fit(shapes, measure, fonts):
     return True
 
 
-def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dump=None):
+def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dump=None, label_half_step=False):
     slide = prs.slides.add_slide(layout)
     title_ph = None
     for ph in list(slide.placeholders):
@@ -372,7 +373,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
             def finals(lst):
                 return [[r.get("sz") or 12 for p in (x.get("text") or {}).get("paras", []) for r in p.get("runs", [])] for x in lst]
             today = sized(None)
-            judge = lay_out(today, page, place, faces, {"warnings": []})["measure"]
+            judge = lay_out(today, page, place, faces, {"warnings": []}, label_half_step)["measure"]
 
             o_judge = layoutfit._O(judge, faces[0], layoutfit.BODY, None)
 
@@ -416,7 +417,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 keep = set(wraps)
                 for _ in range(6):
                     trial = sized(step, keep)
-                    ok = lay_out(trial, page, place, faces, {"warnings": []})["fits"]
+                    ok = lay_out(trial, page, place, faces, {"warnings": []}, label_half_step)["fits"]
                     grew = {i for i in guarded if lines(trial)[i] > base_lines[i]} - keep
                     if not grew:
                         break
@@ -429,7 +430,7 @@ def build_slide(prs, layout, entry, page, report, fit=True, fit_first=False, dum
                 if ok and not more and all(b >= a - 1e-9 for a, b in pairs) and any(b > a + 1e-9 for a, b in pairs):
                     shapes = sized(step, keep)   # fresh: the pass runs once on what is drawn
                 break
-        lay_out(shapes, page, place, faces, report)
+        lay_out(shapes, page, place, faces, report, label_half_step)
         if dump is not None:
             dump.append({"id": page["id"], "title": entry.get("title") or "", "shapes": copy.deepcopy(shapes)})
     # what shrank, as the slide carries it once the pass is done (the fill
@@ -494,6 +495,7 @@ def main():
     ap.add_argument("--keep-originals", action="store_true")
     ap.add_argument("--no-fit", action="store_true", help="draw the pages as the library drew them, without the layout pass")
     ap.add_argument("--fit-first", action="store_true", help="EXPERIMENT (off by default): run the layout pass at the page's own sizes and shrink only what it cannot hold")
+    ap.add_argument("--label-half-step", action="store_true", help="OPTION (off by default): a smaller label keeps at least half of its drawn step under the larger text above it")
     ap.add_argument("--dump-shapes", help="write each rebuilt page's final shapes (page inches) to this JSON file, for the gallery renderer")
     ap.add_argument("--pages", default=DEFAULT_PAGES, help="the page catalogue (default: the skill's sample)")
     a = ap.parse_args()
@@ -528,7 +530,7 @@ def main():
         rep = {"slide": e["slide"], "page": e["page"], "filled": [], "kept": [], "cleared": [],
                "shrunk": [], "layout": [], "text_up": 0, "warnings": [], "source": None}
         orig = originals[e["slide"] - 1]
-        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit, fit_first=a.fit_first, dump=dumped)
+        new = build_slide(prs, layout, e, pages[e["page"]], rep, fit=not a.no_fit, fit_first=a.fit_first, dump=dumped, label_half_step=a.label_half_step)
         rep["notes"] = "kept" if copy_notes(orig, new) else None
         built.append((orig, sld_ids[-1], rep))
         reports.append(rep)

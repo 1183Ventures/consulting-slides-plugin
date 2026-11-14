@@ -461,6 +461,24 @@ class LayoutFitParity(unittest.TestCase):
         self.assertEqual(screen.spacing(12), 9.0)
         self.assertEqual(screen.spacing(10), 7.5)
 
+    def test_label_half_step_is_an_option(self):
+        # off by default (the JS parity holds); on, a smaller label keeps half its step under the kept text above
+        v = next(x for x in self.vectors if x["id"] == "situation-complication-resolution") if any(
+            x["id"] == "situation-complication-resolution" for x in self.vectors) else None
+        shapes = [{"kind": "sp", "geom": "rect", "x": 0.5, "y": 2 + i * 0.6, "w": 6, "h": 0.4, "fill": None, "line": None,
+                   "text": {"anchor": "t", "inset": [0, 0, 0, 0], "paras": [{"runs": [{"sz": sz, "t": t}]}]}}
+                  for i, (sz, t) in enumerate(((14, "The body text the fill leaves alone"), (11, "A small label under it"),
+                                               (14, "More body text"), (11, "Another small label")))]
+        plain, half = copy.deepcopy(shapes), copy.deepcopy(shapes)
+        r0 = layoutfit.fit_layout(plain, measure=self.measure)
+        r1 = layoutfit.fit_layout(half, measure=self.measure, label_half_step=True)
+        self.assertEqual(r0["size"], 2.5)            # 11 to 13.5, half a point under 14
+        self.assertEqual(r1["size"], 1.5)            # 11 to 12.5: half of the 3 pt step kept
+        if v is not None:
+            a, b = copy.deepcopy(v["input"]), copy.deepcopy(v["input"])
+            layoutfit.fit_layout(a, fonts=v["fonts"], measure=self.measure, body=v["body"], page_id=v["id"])
+            self.assertIsNone(first_difference(rounded(a), v["expect"]))
+
     def test_comparer_tells_missing_from_null(self):
         self.assertIsNotNone(first_difference({"a": None}, {}))
         self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))
