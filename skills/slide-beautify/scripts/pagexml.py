@@ -277,6 +277,13 @@ def _xfrm(place, x, y, w, h, rot=0, flip_h=False, flip_v=False, geom=None):
     return '<a:xfrm%s><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % (extra, X, Y, W, H)
 
 
+def adj_xml(adj):
+    """A preset's adjust values (a pill's corner, a chevron's point), as
+    ooxml.js geomXml writes them. They are relative to the shape's short side,
+    so a box the pass resizes keeps its look."""
+    return "".join('<a:gd name="%s" fmla="val %d"/>' % (esc(k), round(v)) for k, v in (adj or {}).items())
+
+
 def sp_xml(s, sid, place, name=None, size_override=None):
     nm = esc(name or s.get("name") or "Shape %d" % sid)
     tx = ' txBox="1"' if s.get("textBox") else ""
@@ -284,9 +291,9 @@ def sp_xml(s, sid, place, name=None, size_override=None):
         '<p:sp xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
         'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         '<p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr%s/><p:nvPr/></p:nvSpPr>'
-        '<p:spPr>%s<a:prstGeom prst="%s"><a:avLst/></a:prstGeom>%s%s</p:spPr>%s</p:sp>'
+        '<p:spPr>%s<a:prstGeom prst="%s"><a:avLst>%s</a:avLst></a:prstGeom>%s%s</p:spPr>%s</p:sp>'
     ) % (sid, nm, tx, _xfrm(place, s["x"], s["y"], s["w"], s["h"], s.get("rot") or 0, geom=s.get("geom")),
-         s.get("geom") or "rect", fill_xml(s.get("fill"), s.get("alpha")),
+         s.get("geom") or "rect", adj_xml(s.get("adj")), fill_xml(s.get("fill"), s.get("alpha")),
          line_xml(s.get("line"), place.s), text_body_xml(s.get("text"), place, size_override))
 
 

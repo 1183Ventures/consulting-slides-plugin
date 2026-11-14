@@ -372,6 +372,23 @@ class LayoutFitParity(unittest.TestCase):
         self.assertLess(low.k, 1.0)
         self.assertAlmostEqual(low.dy / E, 1.7 + 0.12 - 1.62, places=3)
 
+    def test_rounded_shapes_keep_their_corners(self):
+        # a pill (adj 50000) and a chevron's point reach the deck, resized or not (CEO, 14 Nov 2026)
+        import pagexml
+        E = 914400
+        place = pagexml.Place(int(13.333 * E), int(7.5 * E))
+        pill = {"kind": "sp", "geom": "roundRect", "x": 1, "y": 1, "w": 1.85, "h": 0.38, "fill": "a3", "adj": {"adj": 50000}}
+        self.assertIn('<a:gd name="adj" fmla="val 50000"/>', pagexml.sp_xml(pill, 5, place))
+        taller = dict(pill, h=0.6)
+        self.assertIn('<a:gd name="adj" fmla="val 50000"/>', pagexml.sp_xml(taller, 6, place))
+        self.assertIn("<a:avLst></a:avLst>", pagexml.sp_xml(dict(pill, adj=None), 7, place))
+        # every shape the sample draws with adjust values carries them into a beautified deck
+        with open(os.path.join(ROOT, "..", "assets", "pages.json"), encoding="utf-8") as fh:
+            pages = json.load(fh)["pages"]
+        self.assertGreaterEqual(sum(1 for p in pages for s in p["shapes"] if s.get("adj")), 20)
+        self.assertEqual(next(s for s in next(p for p in pages if p["id"] == "two-options")["shapes"]
+                              if s.get("geom") == "roundRect")["adj"], {"adj": 50000})
+
     def test_comparer_tells_missing_from_null(self):
         self.assertIsNotNone(first_difference({"a": None}, {}))
         self.assertIsNone(first_difference({"a": 1.00001}, {"a": 1.0}))
